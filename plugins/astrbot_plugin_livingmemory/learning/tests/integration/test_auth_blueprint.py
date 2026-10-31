@@ -1,0 +1,295 @@
+"""
+Integration tests for Authentication Blueprint
+
+Tests the auth blueprint routes with mock dependencies
+"""
+from types import SimpleNamespace
+
+import pytest
+from webui.compat import Quart
+from webui.blueprints.auth import auth_bp
+from webui.dependencies import get_container
+from webui.services.auth_service import INITIAL_WEBUI_PASSWORD_ENV_VAR
+
+
+def assert_no_store_headers(response):
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Pragma"] == "no-cache"
+    assert response.headers["Expires"] == "0"
+
+
+@pytest.fixture
+async def app(mock_container):
+    """Create test Quart application"""
+    container = get_container()
+    previous_plugin_config = container.plugin_config
+    mock_container.plugin_config.enable_webui_password = False
+    container.plugin_config = mock_container.plugin_config
+
+    app = Quart(__name__)
+    app.config['TESTING'] = True
+    app.secret_key = 'test-secret-key'
+
+    # Register blueprint
+    app.register_blueprint(auth_bp)
+
+    yield app
+
+    container.plugin_config = previous_plugin_config
+
+
+@pytest.fixture
+async def client(app):
+    """Create test client"""
+    return app.test_client()
+
+
+class TestAuthBlueprint:
+    """Integration tests for auth blueprint"""
+
+    @pytest.mark.asyncio
+    async def test_login_get(self, client):
+        """GET /api/login is kept as a compatibility redirect."""
+        response = await client.get('/api/login')
+
+        assert response.status_code in [302, 303, 307]
+        assert response.headers["Location"].endswith("/api/index")
+
+    @pytest.mark.asyncio
+    async def test_login_post_success(self, client, mock_container):
+        """POST /api/login succeeds without credentials in pack branch."""
+        response = await client.post('/api/login', json={})
+
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data['message'] == 'Passwordless WebUI access granted'
+        assert data['must_change'] is False
+        assert data['redirect'] == '/api/index'
+
+    @pytest.mark.asyncio
+    async def test_login_post_incorrect(self, client, mock_container):
+        """Password payloads are ignored in passwordless mode."""
+        response = await client.post('/api/login', json={
+            'password': 'wrong_password'
+        })
+
+        assert response.status_code == 200
+        assert_no_store_headers(response)
+        body = await response.get_data(as_text=True)
+        assert 'wrong_password' not in body
+        data = await response.get_json()
+        assert data['redirect'] == '/api/index'
+
+    @pytest.mark.asyncio
+    async def test_login_post_locked(self, client, mock_container):
+        """Passwordless mode does not apply login lockout."""
+        response = await client.post('/api/login', json={
+            'password': 'any_password'
+        })
+
+        assert response.status_code == 200
+        data = await response.get_json()
+        assert data['must_change'] is False
+
+    @pytest.mark.asyncio
+    async def test_logout(self, client):
+        """Logout is a compatibility no-op in passwordless mode."""
+
+        response = await client.post('/api/logout')
+
+        assert response.status_code == 200
+        assert_no_store_headers(response)
+        data = await response.get_json()
+        assert data.get('redirect') == '/api/index'
+
+    @pytest.mark.asyncio
+    async def test_change_password_success(self, client, mock_container):
+        """Password change is disabled because there is no WebUI password."""
+        response = await client.post('/api/plugin_change_password', json={
+            'old_password': 'OldPass123!',
+            'new_password': 'NewPass456!'
+        })
+
+        assert response.status_code == 410
+        assert_no_store_headers(response)
+        body = await response.get_data(as_text=True)
+        assert 'OldPass123!' not in body
+        assert 'NewPass456!' not in body
+        data = await response.get_json()
+        assert data.get('success') is False
+        assert data.get('redirect') == '/api/index'
+
+    @pytest.mark.asyncio
+    async def test_change_password_weak(self, client, mock_container):
+        """Password strength is irrelevant when password changes are disabled."""
+        response = await client.post('/api/plugin_change_password', json={
+            'old_password': 'OldPass123!',
+            'new_password': 'weak'
+        })
+
+        assert response.status_code == 410
+        data = await response.get_json()
+        assert '免密访问' in data.get('error', '')
+
+    @pytest.mark.asyncio
+    async def test_index_authenticated(self, client):
+        """Test GET /api/index when authenticated"""
+        async with client.session_transaction() as session:
+            session['authenticated'] = True
+
+        response = await client.get('/api/index')
+
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_index_not_authenticated(self, client):
+        """GET /api/index opens directly without an authenticated session."""
+        response = await client.get('/api/index')
+
+        assert response.status_code == 200
+
+
+class TestAuthMiddleware:
+    """Test authentication middleware"""
+
+    @pytest.mark.asyncio
+    async def test_require_auth_decorator_authenticated(self, client, mock_container):
+        """Test @require_auth allows authenticated requests"""
+        async with client.session_transaction() as session:
+            session['authenticated'] = True
+
+        response = await client.post('/api/logout')
+
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_require_auth_decorator_not_authenticated(self, client):
+        """@require_auth is pass-through in pack passwordless mode."""
+        response = await client.post('/api/logout')
+
+        assert response.status_code == 200
+
+
+class TestPasswordEnabledAuthBlueprint:
+    """Integration tests for optional password mode."""
+
+    @pytest.mark.asyncio
+    async def test_login_page_renders_when_password_enabled(self, client, tmp_path):
+        get_container().plugin_config = SimpleNamespace(
+            enable_webui_password=True,
+            data_dir=str(tmp_path),
+        )
+
+        response = await client.get('/api/login')
+
+        assert response.status_code == 200
+        body = await response.get_data(as_text=True)
+        assert "SELF LEARNING" in body
+        assert "登录密码" in body
+
+    @pytest.mark.asyncio
+    async def test_index_redirects_to_login_when_password_enabled(self, client, tmp_path):
+        get_container().plugin_config = SimpleNamespace(
+            enable_webui_password=True,
+            data_dir=str(tmp_path),
+        )
+
+        response = await client.get('/api/index')
+
+        assert response.status_code in [302, 303, 307]
+        assert_no_store_headers(response)
+        assert response.headers["Location"].endswith("/api/login")
+
+    @pytest.mark.asyncio
+    async def test_login_post_checks_password_when_enabled(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv(INITIAL_WEBUI_PASSWORD_ENV_VAR, "InitialPass123!")
+        get_container().plugin_config = SimpleNamespace(
+            enable_webui_password=True,
+            data_dir=str(tmp_path),
+        )
+
+        failed = await client.post('/api/login', json={'password': 'wrong_password'})
+        assert failed.status_code == 401
+        assert_no_store_headers(failed)
+        failed_body = await failed.get_data(as_text=True)
+        assert 'wrong_password' not in failed_body
+
+        response = await client.post(
+            '/api/login',
+            json={'password': 'InitialPass123!'},
+        )
+
+        assert response.status_code == 200
+        assert_no_store_headers(response)
+        body = await response.get_data(as_text=True)
+        assert 'InitialPass123!' not in body
+        assert 'password_hash' not in body
+        assert 'salt' not in body
+        data = await response.get_json()
+        assert data['must_change'] is True
+        assert data['redirect'] == '/api/plugin_change_password'
+
+    @pytest.mark.asyncio
+    async def test_change_password_when_enabled(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv(INITIAL_WEBUI_PASSWORD_ENV_VAR, "InitialPass123!")
+        get_container().plugin_config = SimpleNamespace(
+            enable_webui_password=True,
+            data_dir=str(tmp_path),
+        )
+        await client.post('/api/login', json={'password': 'InitialPass123!'})
+
+        response = await client.post('/api/plugin_change_password', json={
+            'old_password': 'InitialPass123!',
+            'new_password': 'NewPass123!',
+        })
+
+        assert response.status_code == 200
+        assert_no_store_headers(response)
+        body = await response.get_data(as_text=True)
+        assert 'InitialPass123!' not in body
+        assert 'NewPass123!' not in body
+        assert 'password_hash' not in body
+        assert 'salt' not in body
+        data = await response.get_json()
+        assert data["success"] is True
+        # 改密后要求用新密码重新登录
+        assert data["redirect"] == "/api/login"
+
+        # 会话已失效：未带新登录态的请求返回 401
+        status_response = await client.get('/api/password_status')
+        assert status_response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_webui_password_setup_requires_confirmation(self, client, mock_container):
+        response = await client.post('/api/webui_password/setup', json={
+            'password': 'CustomPass123!',
+        })
+
+        assert response.status_code == 400
+        data = await response.get_json()
+        assert data["success"] is False
+        assert "manual_confirmed" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_webui_password_setup_enables_protection_and_clears_session(self, client, mock_container):
+        response = await client.post('/api/webui_password/setup', json={
+            'password': 'CustomPass123!',
+            'manual_confirmed': True,
+        })
+
+        assert response.status_code == 200
+        assert_no_store_headers(response)
+        body = await response.get_data(as_text=True)
+        assert 'CustomPass123!' not in body
+        assert 'password_hash' not in body
+        assert 'salt' not in body
+        data = await response.get_json()
+        assert data["success"] is True
+        assert data["redirect"] == "/api/login"
+
+        assert mock_container.plugin_config.enable_webui_password is True
+        mock_container.plugin_config.save_config.assert_called_once()
+
+        # 启用即生效：旧免密会话被清除，后续请求需要登录
+        status_response = await client.get('/api/password_status')
+        assert status_response.status_code == 401

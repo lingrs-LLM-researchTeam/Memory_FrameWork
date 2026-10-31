@@ -1,0 +1,1055 @@
+from collections import defaultdict
+import asyncio
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy import select, text
+from sqlalchemy import inspect as sa_inspect
+from sqlalchemy.engine import make_url
+
+from config import PluginConfig
+from core.database.engine import DatabaseEngine
+from models.orm import Base
+from models.orm.jargon import Jargon
+from models.orm.learning import StyleLearningReview
+from services.database.facades.jargon_facade import JargonFacade
+from services.database.sqlalchemy_database_manager import SQLAlchemyDatabaseManager
+
+
+def test_orm_index_names_are_globally_unique():
+    """SQLite/PostgreSQL require index names to be unique per database/schema."""
+    index_to_tables = defaultdict(list)
+    for table in Base.metadata.sorted_tables:
+        for index in table.indexes:
+            index_to_tables[index.name].append(table.name)
+
+    duplicates = {
+        name: tables
+        for name, tables in index_to_tables.items()
+        if len(tables) > 1
+    }
+
+    assert duplicates == {}
+
+
+@pytest.mark.asyncio
+async def test_sqlite_create_tables_creates_all_orm_tables(tmp_path):
+    db_path = tmp_path / "messages.db"
+    engine = DatabaseEngine(f"sqlite:///{db_path.as_posix()}")
+
+    try:
+        await engine.create_tables(enable_auto_migration=True)
+
+        async with engine.engine.begin() as conn:
+            created_tables = await conn.run_sync(
+                lambda sync_conn: set(sa_inspect(sync_conn).get_table_names())
+            )
+
+        assert set(Base.metadata.tables) <= created_tables
+        assert db_path.exists()
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_auto_migration_adds_expression_persona_id(tmp_path):
+    db_path = tmp_path / "messages.db"
+    engine = DatabaseEngine(f"sqlite:///{db_path.as_posix()}")
+
+    try:
+        async with engine.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE expression_patterns (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        group_id VARCHAR(255) NOT NULL,
+                        situation TEXT NOT NULL,
+                        expression TEXT NOT NULL,
+                        weight FLOAT NOT NULL,
+                        last_active_time FLOAT NOT NULL,
+                        create_time FLOAT NOT NULL
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO expression_patterns (
+                        group_id, situation, expression, weight,
+                        last_active_time, create_time
+                    )
+                    VALUES ('group-a', '打招呼', '旧表达', 1.0, 1.0, 1.0)
+                    """
+                )
+            )
+
+        await engine.create_tables(enable_auto_migration=True)
+
+        async with engine.engine.begin() as conn:
+            columns = await conn.run_sync(
+                lambda sync_conn: {
+                    col["name"]
+                    for col in sa_inspect(sync_conn).get_columns(
+                        "expression_patterns"
+                    )
+                }
+            )
+            persona_id = (
+                await conn.execute(
+                    text("SELECT persona_id FROM expression_patterns LIMIT 1")
+                )
+            ).scalar_one()
+
+        assert "persona_id" in columns
+        assert persona_id == "default"
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_auto_migration_adds_expression_user_id(tmp_path):
+    db_path = tmp_path / "messages.db"
+    engine = DatabaseEngine(f"sqlite:///{db_path.as_posix()}")
+
+    try:
+        async with engine.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE expression_patterns (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        group_id VARCHAR(255) NOT NULL,
+                        persona_id VARCHAR(255) NOT NULL DEFAULT 'default',
+                        situation TEXT NOT NULL,
+                        expression TEXT NOT NULL,
+                        weight FLOAT NOT NULL,
+                        last_active_time FLOAT NOT NULL,
+                        create_time FLOAT NOT NULL
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO expression_patterns (
+                        group_id, persona_id, situation, expression, weight,
+                        last_active_time, create_time
+                    )
+                    VALUES ('group-a', 'bot-a', '打招呼', '旧表达', 1.0, 1.0, 1.0)
+                    """
+                )
+            )
+
+        await engine.create_tables(enable_auto_migration=True)
+
+        async with engine.engine.begin() as conn:
+            columns = await conn.run_sync(
+                lambda sync_conn: {
+                    col["name"]
+                    for col in sa_inspect(sync_conn).get_columns(
+                        "expression_patterns"
+                    )
+                }
+            )
+            user_id = (
+                await conn.execute(
+                    text("SELECT user_id FROM expression_patterns LIMIT 1")
+                )
+            ).scalar_one()
+            indexes = await conn.run_sync(
+                lambda sync_conn: {
+                    index["name"]
+                    for index in sa_inspect(sync_conn).get_indexes(
+                        "expression_patterns"
+                    )
+                }
+            )
+
+        assert "user_id" in columns
+        assert user_id is None
+        assert "idx_expression_scope_user_weight" in indexes
+        assert "idx_expression_scope_user_active" in indexes
+    finally:
+        await engine.close()
+
+
+
+@pytest.mark.asyncio
+async def test_sqlite_auto_migration_dedupes_jargon_before_unique_index(tmp_path):
+    db_path = tmp_path / "messages.db"
+    engine = DatabaseEngine(f"sqlite:///{db_path.as_posix()}")
+
+    try:
+        async with engine.engine.begin() as conn:
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE jargon (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        content TEXT NOT NULL,
+                        raw_content TEXT,
+                        meaning TEXT,
+                        is_jargon BOOLEAN,
+                        count INTEGER DEFAULT 1,
+                        last_inference_count INTEGER DEFAULT 0,
+                        is_complete BOOLEAN DEFAULT 0,
+                        is_global BOOLEAN DEFAULT 0,
+                        chat_id VARCHAR(255) NOT NULL,
+                        created_at BIGINT NOT NULL,
+                        updated_at BIGINT NOT NULL
+                    )
+                    """
+                )
+            )
+            await conn.execute(text("CREATE INDEX idx_jargon_chat_id ON jargon (chat_id)"))
+            await conn.execute(
+                text(
+                    """
+                    CREATE TABLE jargon_usage_frequency (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        jargon_id INTEGER NOT NULL REFERENCES jargon(id),
+                        group_id VARCHAR(255) NOT NULL,
+                        usage_count INTEGER DEFAULT 0,
+                        last_used_at FLOAT NOT NULL,
+                        success_rate FLOAT,
+                        context_types TEXT,
+                        created_at DATETIME
+                    )
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO jargon (
+                        content, raw_content, meaning, is_jargon, count,
+                        last_inference_count, is_complete, is_global,
+                        chat_id, created_at, updated_at
+                    )
+                    VALUES
+                    ('打爆', '["ctx-a"]', NULL, NULL, 2, 1, 0, 0, 'group-a', 10, 20),
+                    ('打爆', '["ctx-b"]', '人工释义', 1, 5, 4, 1, 1, 'group-a', 8, 30),
+                    ('打爆', '["ctx-c"]', '自动释义', 0, 3, 2, 0, 0, 'group-a', 12, 25),
+                    ('打爆', '["other-group"]', '其他群释义', 1, 1, 1, 1, 0, 'group-b', 15, 35)
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    INSERT INTO jargon_usage_frequency (
+                        jargon_id, group_id, usage_count, last_used_at
+                    )
+                    VALUES (1, 'group-a', 1, 20.0), (3, 'group-a', 2, 25.0)
+                    """
+                )
+            )
+
+        await engine.create_tables(enable_auto_migration=True)
+
+        async with engine.engine.begin() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        """
+                        SELECT id, chat_id, content, raw_content, meaning,
+                               is_jargon, count, last_inference_count,
+                               is_complete, is_global, created_at, updated_at
+                        FROM jargon
+                        WHERE content = '打爆'
+                        ORDER BY chat_id, id
+                        """
+                    )
+                )
+            ).mappings().all()
+            indexes = await conn.run_sync(
+                lambda sync_conn: {
+                    index["name"]
+                    for index in sa_inspect(sync_conn).get_indexes("jargon")
+                }
+            )
+            usage_jargon_ids = [
+                row["jargon_id"]
+                for row in (
+                    await conn.execute(
+                        text(
+                            """
+                            SELECT jargon_id
+                            FROM jargon_usage_frequency
+                            ORDER BY id
+                            """
+                        )
+                    )
+                ).mappings().all()
+            ]
+
+        group_a_rows = [row for row in rows if row["chat_id"] == "group-a"]
+        group_b_rows = [row for row in rows if row["chat_id"] == "group-b"]
+
+        assert "uk_chat_content" in indexes
+        assert len(group_a_rows) == 1
+        assert len(group_b_rows) == 1
+
+        merged = group_a_rows[0]
+        assert merged["meaning"] == "人工释义"
+        assert bool(merged["is_jargon"]) is True
+        assert bool(merged["is_complete"]) is True
+        assert bool(merged["is_global"]) is True
+        assert merged["count"] == 10
+        assert merged["last_inference_count"] == 4
+        assert merged["created_at"] == 8
+        assert merged["updated_at"] == 30
+        assert json.loads(merged["raw_content"]) == ["ctx-b"]
+        assert usage_jargon_ids == [2, 2]
+    finally:
+        await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_jargon_facade_dedupes_cross_group_content_for_global_queries(tmp_path):
+    config = PluginConfig(
+        data_dir=str(tmp_path),
+        enable_web_interface=False,
+        db_type="sqlite",
+    )
+    config.messages_db_path = str(tmp_path / "messages.db")
+    manager = SQLAlchemyDatabaseManager(config)
+
+    try:
+        assert await manager.start() is True
+
+        await manager.save_or_update_jargon(
+            "group-a",
+            "猫娘",
+            {
+                "raw_content": '["group-a ctx"]',
+                "meaning": "group-a meaning",
+                "is_jargon": True,
+                "count": 2,
+                "is_complete": True,
+            },
+        )
+        await manager.save_or_update_jargon(
+            "group-b",
+            "猫娘",
+            {
+                "raw_content": '["group-b ctx"]',
+                "meaning": "group-b meaning",
+                "is_jargon": True,
+                "count": 9,
+                "is_complete": True,
+            },
+        )
+        await manager.save_or_update_jargon(
+            "group-c",
+            "上强度",
+            {
+                "raw_content": '["group-c ctx"]',
+                "meaning": "increase intensity",
+                "is_jargon": True,
+                "count": 1,
+                "is_complete": True,
+            },
+        )
+
+        search_results = await manager.search_jargon(
+            "猫",
+            confirmed_only=True,
+            limit=10,
+        )
+        recent_results = await manager.get_recent_jargon_list(
+            limit=10,
+            only_confirmed=True,
+        )
+        total_count = await manager.get_jargon_count(only_confirmed=True)
+        scoped_results = await manager.search_jargon(
+            "猫",
+            chat_id="group-a",
+            confirmed_only=True,
+            limit=10,
+        )
+
+        assert [row["content"] for row in search_results] == ["猫娘"]
+        assert search_results[0]["chat_id"] == "group-b"
+        assert [row["content"] for row in recent_results].count("猫娘") == 1
+        assert total_count == 2
+        assert [row["content"] for row in scoped_results] == ["猫娘"]
+        assert scoped_results[0]["chat_id"] == "group-a"
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_database_manager_start_initializes_facades_and_learning_storage(tmp_path):
+    """Runtime manager startup must create tables and load domain facades."""
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(
+            data_dir=str(tmp_path),
+            enable_web_interface=False,
+            db_type="sqlite",
+        )
+    )
+
+    try:
+        assert await manager.start() is True
+
+        async with manager.engine.engine.begin() as conn:
+            created_tables = await conn.run_sync(
+                lambda sync_conn: set(sa_inspect(sync_conn).get_table_names())
+            )
+
+        assert set(Base.metadata.tables) <= created_tables
+        assert "persona_change_snapshots" in created_tables
+
+        message_id = await manager.save_raw_message(
+            {
+                "sender_id": "user-a",
+                "sender_name": "User A",
+                "message": "用于数据库启动回归的学习消息",
+                "group_id": "group-a",
+                "timestamp": 1234567890,
+                "platform": "test",
+            }
+        )
+        assert message_id > 0
+
+        pending_messages = await manager.get_unprocessed_messages(
+            limit=10,
+            group_id="group-a",
+        )
+        assert any(message["id"] == message_id for message in pending_messages)
+        assert await manager.mark_messages_processed([message_id]) is True
+
+        persona_review_id = await manager.add_persona_learning_review(
+            {
+                "timestamp": 1234567890.0,
+                "group_id": "group-a",
+                "update_type": "style_learning",
+                "new_content": "表达风格更新",
+                "proposed_content": "表达风格更新",
+                "confidence_score": 0.9,
+                "reason": "runtime regression",
+            }
+        )
+        assert persona_review_id > 0
+
+        snapshot_id = await manager.save_persona_change_snapshot(
+            {
+                "review_source": "persona_learning",
+                "review_id": str(persona_review_id),
+                "applied_persona_id": "default",
+                "applied_at": 1234567891.0,
+                "before_system_prompt": "before",
+                "after_system_prompt": "after",
+                "before_begin_dialogs": ["hello"],
+                "after_begin_dialogs": ["hello", "hi"],
+                "affected_fields": ["system_prompt", "begin_dialogs"],
+            }
+        )
+        assert snapshot_id > 0
+        snapshot = await manager.get_persona_change_snapshot(
+            "persona_learning",
+            str(persona_review_id),
+        )
+        assert snapshot["before_system_prompt"] == "before"
+        assert snapshot["after_begin_dialogs"] == ["hello", "hi"]
+        assert snapshot["affected_fields"] == ["system_prompt", "begin_dialogs"]
+
+        jargon_id = await manager.save_or_update_jargon(
+            "group-a",
+            "测试黑话",
+            {
+                "raw_content": "[\"测试黑话在群里出现\"]",
+                "is_jargon": True,
+                "count": 1,
+                "is_complete": True,
+            },
+        )
+        assert jargon_id and jargon_id > 0
+
+        async with manager.get_session() as session:
+            session.add(
+                StyleLearningReview(
+                    type="style_learning",
+                    group_id="group-a",
+                    timestamp=1234567890.0,
+                    learned_patterns="[]",
+                    status="pending",
+                )
+            )
+            await session.commit()
+            rows = (
+                await session.execute(select(StyleLearningReview))
+            ).scalars().all()
+
+        assert rows
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_database_manager_falls_back_to_sqlite_when_postgresql_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    """PostgreSQL startup failures should not prevent local SQLite table setup."""
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(
+            data_dir=str(tmp_path),
+            db_type="pgsql",
+            enable_web_interface=False,
+        )
+    )
+
+    async def fail_postgresql_database_check():
+        raise RuntimeError("postgres unavailable")
+
+    monkeypatch.setattr(
+        manager,
+        "_ensure_postgresql_database_exists",
+        fail_postgresql_database_check,
+    )
+
+    try:
+        assert manager._get_db_type() == "postgresql"
+        assert await manager.start() is True
+
+        url = make_url(manager.engine.database_url)
+        assert url.drivername == "sqlite+aiosqlite"
+        assert Path(url.database).name == "messages.db"
+        assert Path(url.database).exists()
+
+        async with manager.engine.engine.begin() as conn:
+            created_tables = await conn.run_sync(
+                lambda sync_conn: set(sa_inspect(sync_conn).get_table_names())
+            )
+
+        assert set(Base.metadata.tables) <= created_tables
+        assert await manager.engine.health_check() is True
+    finally:
+        await manager.stop()
+
+
+def test_database_manager_sqlite_url_uses_aiosqlite_and_absolute_path(tmp_path):
+    config = PluginConfig(data_dir=str(tmp_path), db_type="sqlite")
+    manager = SQLAlchemyDatabaseManager(config)
+
+    url = make_url(manager._get_database_url())
+
+    assert url.drivername == "sqlite+aiosqlite"
+    assert Path(url.database).is_absolute()
+    assert url.database.endswith("messages.db")
+
+
+def test_database_manager_default_url_uses_postgresql():
+    manager = SQLAlchemyDatabaseManager(PluginConfig())
+
+    url = make_url(manager._get_database_url())
+
+    assert url.drivername == "postgresql+asyncpg"
+    assert url.username == "postgres"
+    assert url.host == "localhost"
+    assert url.port == 5432
+    assert url.database == "astrbot_self_learning"
+
+
+@pytest.mark.parametrize("alias", ["postgres", "pg", "pgsql", "postgresql"])
+def test_database_manager_accepts_postgresql_aliases(alias):
+    manager = SQLAlchemyDatabaseManager(PluginConfig(db_type=alias))
+
+    assert manager._get_db_type() == "postgresql"
+
+
+@pytest.mark.asyncio
+async def test_database_manager_falls_back_to_sqlite_when_postgresql_unavailable(
+    tmp_path,
+    monkeypatch,
+):
+    """PostgreSQL startup failures should not prevent local SQLite table setup."""
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(
+            data_dir=str(tmp_path),
+            db_type="pgsql",
+            enable_web_interface=False,
+        )
+    )
+
+    async def fail_postgresql_database_check():
+        raise RuntimeError("postgres unavailable")
+
+    monkeypatch.setattr(
+        manager,
+        "_ensure_postgresql_database_exists",
+        fail_postgresql_database_check,
+    )
+
+    try:
+        assert await manager.start() is True
+
+        url = make_url(manager.engine.database_url)
+        assert url.drivername == "sqlite+aiosqlite"
+        assert Path(url.database).name == "messages.db"
+        assert Path(url.database).exists()
+
+        async with manager.engine.engine.begin() as conn:
+            created_tables = await conn.run_sync(
+                lambda sync_conn: set(sa_inspect(sync_conn).get_table_names())
+            )
+
+        assert set(Base.metadata.tables) <= created_tables
+        assert await manager.engine.health_check() is True
+    finally:
+        await manager.stop()
+
+
+def test_database_manager_postgresql_url_preserves_credentials_and_schema():
+    config = PluginConfig(
+        db_type="postgres",
+        postgresql_host="db.example.test",
+        postgresql_port=5433,
+        postgresql_user="bot_user",
+        postgresql_password="pa:ss@word",
+        postgresql_database="learning_db",
+        postgresql_schema="bot_space",
+    )
+    manager = SQLAlchemyDatabaseManager(config)
+
+    url = make_url(manager._get_database_url())
+
+    assert url.drivername == "postgresql+asyncpg"
+    assert url.username == "bot_user"
+    assert url.password == "pa:ss@word"
+    assert url.host == "db.example.test"
+    assert url.port == 5433
+    assert url.database == "learning_db"
+    assert url.query["search_path"] == "bot_space"
+
+
+@pytest.mark.asyncio
+async def test_ensure_postgresql_database_exists_creates_missing_database(monkeypatch):
+    executed = []
+
+    class FakeConnection:
+        async def fetchval(self, query, database):
+            assert query == "SELECT 1 FROM pg_database WHERE datname = $1"
+            assert database == "learning_db"
+            return None
+
+        async def execute(self, query):
+            executed.append(query)
+
+        async def close(self):
+            executed.append("closed")
+
+    async def fake_connect(**kwargs):
+        assert kwargs["host"] == "localhost"
+        assert kwargs["port"] == 5432
+        assert kwargs["user"] == "postgres"
+        assert kwargs["database"] == "postgres"
+        return FakeConnection()
+
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(
+            db_type="postgresql",
+            postgresql_database="learning_db",
+        )
+    )
+    monkeypatch.setattr(
+        manager,
+        "_connect_postgresql",
+        lambda asyncpg, database: fake_connect(
+            host=manager.config.postgresql_host,
+            port=manager.config.postgresql_port,
+            user=manager.config.postgresql_user,
+            password=manager.config.postgresql_password,
+            database=database,
+        ),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "asyncpg",
+        SimpleNamespace(connect=fake_connect),
+    )
+
+    await manager._ensure_postgresql_database_exists()
+
+    assert executed == ['CREATE DATABASE "learning_db"', "closed"]
+
+
+@pytest.mark.asyncio
+async def test_ensure_postgresql_database_exists_skips_existing_database(monkeypatch):
+    executed = []
+
+    class FakeConnection:
+        async def fetchval(self, query, database):
+            assert query == "SELECT 1 FROM pg_database WHERE datname = $1"
+            assert database == "learning_db"
+            return 1
+
+        async def execute(self, query):
+            executed.append(query)
+
+        async def close(self):
+            executed.append("closed")
+
+    async def fake_connect(**kwargs):
+        assert kwargs["host"] == "localhost"
+        assert kwargs["port"] == 5432
+        assert kwargs["user"] == "postgres"
+        assert kwargs["database"] == "postgres"
+        return FakeConnection()
+
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(
+            db_type="pgsql",
+            postgresql_database="learning_db",
+        )
+    )
+    monkeypatch.setattr(
+        manager,
+        "_connect_postgresql",
+        lambda asyncpg, database: fake_connect(
+            host=manager.config.postgresql_host,
+            port=manager.config.postgresql_port,
+            user=manager.config.postgresql_user,
+            password=manager.config.postgresql_password,
+            database=database,
+        ),
+    )
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "asyncpg",
+        SimpleNamespace(connect=fake_connect),
+    )
+
+    await manager._ensure_postgresql_database_exists()
+
+    assert executed == ["closed"]
+
+
+def test_database_engine_normalizes_sync_postgresql_url_to_asyncpg():
+    normalized = DatabaseEngine._normalize_driver_url(
+        "postgresql://user:pass@localhost:5432/learning_db",
+        "postgresql+asyncpg",
+    )
+
+    url = make_url(normalized)
+
+    assert url.drivername == "postgresql+asyncpg"
+    assert url.database == "learning_db"
+
+
+def test_jargon_postgresql_upsert_targets_chat_content_unique_constraint():
+    stmt = JargonFacade._build_postgresql_jargon_upsert(
+        "group-a",
+        "测试黑话",
+        {
+            "raw_content": "[]",
+            "meaning": "释义",
+            "is_jargon": True,
+            "count": 1,
+            "is_complete": True,
+        },
+        123,
+    )
+
+    compiled = str(stmt.compile(dialect=postgresql.dialect()))
+
+    assert "ON CONFLICT (chat_id, content) DO UPDATE" in compiled
+    assert "RETURNING jargon.id" in compiled
+    assert "created_at" in compiled
+    assert "updated_at" in compiled
+
+
+def test_jargon_sqlite_upsert_targets_chat_content_unique_constraint():
+    stmt = JargonFacade._build_sqlite_jargon_upsert(
+        "group-a",
+        "测试黑话",
+        {
+            "raw_content": "[]",
+            "meaning": "释义",
+            "is_jargon": True,
+            "count": 1,
+            "is_complete": True,
+        },
+        123,
+    )
+
+    compiled = str(stmt.compile(dialect=sqlite.dialect()))
+
+    assert "ON CONFLICT (chat_id, content) DO UPDATE" in compiled
+    assert "created_at" in compiled
+    assert "updated_at" in compiled
+
+
+@pytest.mark.asyncio
+async def test_jargon_sqlite_upsert_handles_concurrent_duplicate_terms(tmp_path):
+    config = PluginConfig(
+        data_dir=str(tmp_path),
+        enable_web_interface=False,
+        db_type="sqlite",
+    )
+    config.messages_db_path = str(tmp_path / "messages.db")
+    manager = SQLAlchemyDatabaseManager(config)
+
+    try:
+        assert await manager.start() is True
+
+        async def save_term(index: int):
+            return await manager.save_or_update_jargon(
+                "group-race",
+                "打爆",
+                {
+                    "raw_content": f"[\"ctx-{index}\"]",
+                    "meaning": f"meaning-{index}",
+                    "is_jargon": True,
+                    "count": index + 1,
+                    "is_complete": True,
+                },
+            )
+
+        results = await asyncio.gather(*(save_term(i) for i in range(20)))
+
+        assert all(result is not None for result in results)
+        assert len(set(results)) == 1
+
+        async with manager.get_session() as session:
+            rows = (
+                await session.execute(
+                    select(Jargon).where(
+                        Jargon.chat_id == "group-race",
+                        Jargon.content == "打爆",
+                    )
+                )
+            ).scalars().all()
+
+        assert len(rows) == 1
+        assert rows[0].id == results[0]
+        assert rows[0].is_jargon is True
+        assert rows[0].is_complete is True
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_jargon_sqlite_upsert_preserves_completed_manual_definition(tmp_path):
+    config = PluginConfig(
+        data_dir=str(tmp_path),
+        enable_web_interface=False,
+        db_type="sqlite",
+    )
+    config.messages_db_path = str(tmp_path / "messages.db")
+    manager = SQLAlchemyDatabaseManager(config)
+
+    try:
+        assert await manager.start() is True
+
+        first_id = await manager.save_or_update_jargon(
+            "group-manual",
+            "打爆",
+            {
+                "raw_content": "[\"人工确认上下文\"]",
+                "meaning": "人工释义",
+                "is_jargon": True,
+                "count": 5,
+                "is_complete": True,
+            },
+        )
+        second_id = await manager.save_or_update_jargon(
+            "group-manual",
+            "打爆",
+            {
+                "raw_content": "[\"重新学习上下文\"]",
+                "meaning": "自动学习释义",
+                "is_jargon": False,
+                "count": 1,
+                "is_complete": False,
+            },
+        )
+
+        assert second_id == first_id
+
+        async with manager.get_session() as session:
+            row = (
+                await session.execute(
+                    select(Jargon).where(
+                        Jargon.chat_id == "group-manual",
+                        Jargon.content == "打爆",
+                    )
+                )
+            ).scalar_one()
+
+        assert row.meaning == "人工释义"
+        assert row.raw_content == "[\"人工确认上下文\"]"
+        assert row.is_jargon is True
+        assert row.is_complete is True
+        assert row.count == 6
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_jargon_manual_edit_locks_definition_against_later_learning(tmp_path):
+    config = PluginConfig(
+        data_dir=str(tmp_path),
+        enable_web_interface=False,
+        db_type="sqlite",
+    )
+    config.messages_db_path = str(tmp_path / "messages.db")
+    manager = SQLAlchemyDatabaseManager(config)
+
+    try:
+        assert await manager.start() is True
+
+        jargon_id = await manager.save_or_update_jargon(
+            "group-manual",
+            "打爆",
+            {
+                "raw_content": "[\"自动学习上下文\"]",
+                "meaning": "自动释义",
+                "is_jargon": False,
+                "count": 5,
+                "is_complete": False,
+            },
+        )
+        assert await manager.update_jargon(
+            {
+                "id": jargon_id,
+                "meaning": "人工编辑释义",
+                "is_jargon": True,
+                "is_complete": True,
+            }
+        )
+
+        second_id = await manager.save_or_update_jargon(
+            "group-manual",
+            "打爆",
+            {
+                "raw_content": "[\"后续自动学习上下文\"]",
+                "meaning": "后续自动释义",
+                "is_jargon": False,
+                "count": 1,
+                "is_complete": False,
+            },
+        )
+
+        assert second_id == jargon_id
+
+        async with manager.get_session() as session:
+            row = (
+                await session.execute(
+                    select(Jargon).where(
+                        Jargon.chat_id == "group-manual",
+                        Jargon.content == "打爆",
+                    )
+                )
+            ).scalar_one()
+
+        assert row.meaning == "人工编辑释义"
+        assert row.raw_content == "[\"自动学习上下文\"]"
+        assert row.is_jargon is True
+        assert row.is_complete is True
+        assert row.count == 6
+    finally:
+        await manager.stop()
+
+
+def test_database_engine_mysql_uses_aiomysql_without_pool_pre_ping(monkeypatch):
+    captured = {}
+
+    def fake_create_async_engine(db_url, **kwargs):
+        captured["db_url"] = db_url
+        captured.update(kwargs)
+        return SimpleNamespace(pool=SimpleNamespace())
+
+    monkeypatch.setattr(
+        "core.database.engine.create_async_engine",
+        fake_create_async_engine,
+    )
+
+    engine = object.__new__(DatabaseEngine)
+    engine.database_url = "mysql://user:pass@localhost:3306/learning_db"
+    engine.echo = False
+
+    created = engine._create_mysql_engine()
+    url = make_url(captured["db_url"])
+
+    assert created is not None
+    assert url.drivername == "mysql+aiomysql"
+    assert captured["pool_pre_ping"] is False
+    assert captured["connect_args"]["charset"] == "utf8mb4"
+
+
+@pytest.mark.asyncio
+async def test_learning_review_queries_return_empty_before_database_start(tmp_path):
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(data_dir=str(tmp_path), db_type="sqlite")
+    )
+
+    assert await manager.get_pending_persona_learning_reviews() == []
+    assert await manager.get_pending_style_reviews() == []
+    assert await manager.get_reviewed_persona_learning_updates() == []
+
+
+@pytest.mark.asyncio
+async def test_learning_review_queries_recover_missing_facade_after_start(tmp_path):
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(data_dir=str(tmp_path), db_type="sqlite")
+    )
+
+    try:
+        assert await manager.start() is True
+        manager._learning = None
+
+        assert await manager.get_pending_persona_learning_reviews() == []
+        assert manager._learning is not None
+    finally:
+        await manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_jargon_queries_return_empty_before_database_start(tmp_path):
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(data_dir=str(tmp_path), db_type="sqlite")
+    )
+
+    assert await manager.get_jargon_statistics() == manager._empty_jargon_statistics()
+    assert await manager.get_jargon_count() == 0
+    assert await manager.get_recent_jargon_list() == []
+
+
+@pytest.mark.asyncio
+async def test_dashboard_statistics_return_empty_before_database_start(tmp_path):
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(data_dir=str(tmp_path), db_type="sqlite")
+    )
+
+    assert await manager.get_messages_statistics() == manager._empty_message_statistics()
+    assert await manager.get_expression_patterns_statistics() == (
+        manager._empty_expression_patterns_statistics()
+    )
+    assert await manager.get_learning_performance_history("default") == []
+    assert await manager.get_trends_data() == manager._empty_trends_data()
+
+
+@pytest.mark.asyncio
+async def test_jargon_queries_recover_missing_facade_after_start(tmp_path):
+    manager = SQLAlchemyDatabaseManager(
+        PluginConfig(data_dir=str(tmp_path), db_type="sqlite")
+    )
+
+    try:
+        assert await manager.start() is True
+        manager._jargon = None
+
+        assert await manager.get_jargon_count() == 0
+        assert await manager.get_recent_jargon_list() == []
+        assert manager._jargon is not None
+    finally:
+        await manager.stop()

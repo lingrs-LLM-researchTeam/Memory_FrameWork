@@ -1,0 +1,1405 @@
+# Changelog
+
+所有重要更改都将记录在此文件中。
+
+## [4.3.1] - 2026-10-20
+
+### 安全：网络层访问守卫与默认配置收紧（重要行为变更）
+
+- **WebUI 默认监听地址由 `0.0.0.0` 收紧为 `127.0.0.1`**（`web_interface_host`，schema 默认值同步）。历史配置里已存量的 `0.0.0.0` 不受影响，但配合下一条守卫规则，免密 + 局域网的组合会被显式拒绝。
+- **新增 `webui/middleware/local_guard.py` 网络层访问守卫（最外层中间件）**：免密模式（`enable_webui_password=false`，默认）下仅允许 loopback 客户端访问，且 `Host` 头必须指向本机（防 DNS 重绑定）；携带 `Origin` 头的请求必须与面板同源（浏览器跨站请求必带 Origin、服务器间调用不带），修复免密模式下 `CORS allow_origins=["*"]` 允许任意网页经受害者浏览器读取本机 API 响应的问题。局域网访问请开启 `enable_webui_password` 并设置登录密码。
+- **Hub API（`/api/hub/v1/*`，11 个端点）在 `enable_api_auth=false` 时降级为仅本机可调用**：Hub 可写记忆、审批人格更新与注入消息，此前对局域网完全无门槛；伴随插件与本插件同机部署不受影响，跨机调用需配置 `api_key` 并启用 `enable_api_auth`。
+- 守卫按 Sourcery 审查意见加固：本机判定改用 `ipaddress` 解析 IP 字面量（`127.evil.com` 之类前缀伪装域名不再放行）；Origin 同源比较补协议默认端口对齐；Hub loopback 检查叠加 Host 头校验（同机反代转发远程请求可被识别拒绝）。
+- 兜底异常处理器不再把 `str(exc)` 回显给客户端（可能含内部路径/SQL 片段），详情只进日志。
+- MySQL `CREATE DATABASE` 标识符改经反引号双写转义（对齐 PostgreSQL 侧既有实现），防配置可写的 `mysql_database` 注入。
+- `_kill_port_holder` 由 shell 拼接命令（`netstat | findstr`、`taskkill /F /PID`）改为 `create_subprocess_exec` + 参数列表 + PID 数字校验（防御纵深）。
+- 配置响应脱敏改为递归按键名匹配（此前仅顶层，配置分组化后会静默失效）。
+- `LoginAttemptTracker` 增加不活跃 IP 记录清理，防长期运行内存缓慢增长。
+- MaiBot 导入的 preview/export 响应不再回显服务器绝对路径（只保留文件名），与 worldbook 导入"WebUI 请求不收服务端路径"的策略对齐。
+- `.gitignore` 补运行时敏感项：`/data/`（`.secret_key`、`password.json`、SQLite 库所在目录）、`*.db`/`*.sqlite*`、`coverage.xml`、任意层级的 `password.json`。
+
+### 移除：伴随插件内嵌面板，只保留运行状态标识（issue #271）
+
+- iframe 内嵌链路整体移除：删除 `/api/integrations/embed/<plugin_id>` 嵌入壳端点与 `_render_embed_shell`、`IntegrationService.get_embed_target`、X-Frame-Options/frame-ancestors 探测逻辑，以及 WebUI 的「回复策略」页（该页以 iframe 加载 GCP 面板）。GCP v1.2.x 固定返回 `X-Frame-Options: DENY`、AstrBot 官方插件页固定 `SAMEORIGIN`，内嵌必被浏览器拦截，屡次产生"空白面板"体验。
+- 「功能融合」页的「插件面板」改为「伴随插件状态」：每张卡片只展示运行状态标识（`status.healthy`/`state`/`message`）+ 新窗口打开入口。Group Chat Plus 做面板端口可达性探测（结果缓存 60 秒，4xx 视为可达、5xx/拒连为异常），LivingMemory 以插件是否加载为准，未安装/面板未开启/端口不可达分别给出明确文案。
+- `GET /api/integrations/status` 的 `dashboards[]` 新增 `status` 块（`healthy`/`state`/`message`）；`dashboard.url`（内嵌路由）与 `embeddable` 字段移除，`external_url` 保留为新窗口链接（GCP 不再带 `?embed=1`，`dev_api.base` 改为面板 origin，修正拼接 `/panel/api` 的无效地址）。AstrBot 官方插件页（`pages/dashboard`）的「回复策略」页整体移除（其内容与「功能融合」页的 GCP 状态卡重复），集成卡片同步展示健康标识。
+- 导航与首页入口同步收敛：侧边导航、首页快捷卡与官方插件页导航均移除「回复策略」，GCP 状态在「功能融合」页查看；「打开面板」按钮有独立面板/官方面板链接时优先新窗口，无外部入口才退回内部路由，面板不可用时按钮禁用（不再出现"可点但无动作"）。
+- 测试：重写 `tests/unit/test_integration_service.py`（状态块/可达性分级/嵌入端点移除断言），新增 `tests/unit/test_local_guard.py`（守卫规则与 Hub loopback 限制 11 项）。
+
+### 版本
+
+- 版本号由 4.2.9 提升至 **4.3.1**。
+
+## [4.2.9] - 2026-10-16
+
+### 修复：内嵌插件页黑话导入报"未知黑话操作：import_jargons"（issue #269）
+
+- `core/page_api.py` 的 `post_jargon_action` 此前缺少 `import_jargons` 分支：`pages/dashboard` 导入按钮把 `action: "import_jargons"` 发往 `jargon/action`，落入"未知黑话操作"兜底；可用的实现只存在于 `post_reviews_action`（`reviews/action`）。现补齐该分支，`text`/`group_id`/`is_global` 透传 `JargonService.import_jargons`，与审查页行为一致。
+- 存在失败行时按失败应答（`data.success=false`，含部分行失败）：内嵌页导入按钮据 `result.success` 区分成败并保留输入框内容供修正重试（服务对已入库行幂等，原样重提只计入 skipped），不再出现"报错却弹成功提示并清空输入"。
+- 全局导入跨群查重：全局词条可能落在任意 `chat_id` 下（先在某群学习后标记全局），原先仅按 `(chat_id='', content)` 精确查询会漏掉它们造成同一词条重复入库。新增 `JargonFacade.get_global_jargon_by_content`（database_manager 同名委托，含未确认候选），`import_jargons` 在精确查询未命中且 `is_global` 时兜底查询——已确认词条计入 skipped、未确认候选走升级路径；旧版 DB 管理器无此方法时自动跳过兜底。已知限制：查重与插入非原子，与「把既有词条标记全局」的并发写之间仍有 TOCTOU 重复窗口（与黑话挖掘链路一致），彻底消除需跨行 partial unique index 迁移。
+- 新增回归测试 `tests/unit/test_page_api_jargon_import.py`（成功导入 / 失败消息透传 / 部分行失败按失败应答 / 未知 action 仍被拒绝）与服务层跨群查重测试（`tests/unit/test_jargon_import.py`）。
+
+### 兼容：AstrBot v4.29 插件 Pages→Views 改名
+
+- AstrBot v4.29 将插件页面（Pages）更名为视图（Views），Dashboard hash 路由由 `/#/plugin-page/...` 变为 `/#/plugin-view/...`（旧路由保留为 legacy 别名，提交 4b049d1e5、8831d9502）。`utils/framework_compat.py` 新增 `plugin_page_hash_url`：运行时按 AstrBot 版本（≥4.29.0）生成新路由，旧版本回退 legacy 路由；`core/page_api.py` 快捷链接、`main.py` 注册日志与 LivingMemory 官方插件页入口统一走该 helper。
+- 官方插件页目录约定跟随 AstrBot `PLUGIN_PAGE_ROOT_DIR_NAMES`：`_discover_plugin_pages` 经 `utils/framework_compat.plugin_view_dir_names()` 版本门控发现目录（v4.29+ 为 `views/`+`pages/` 合并去重、views 在前；旧版仅 `pages/`，避免向不发现 views 的旧页面服务暴露死链接），多页面时官方页链接优先指向 dashboard；LivingMemory 2.7.0-beta.2 仍用 `pages/`，不受影响。
+- 新增 `tests/unit/test_framework_compat.py` 与集成服务路由门控测试，断言不随本机 AstrBot 版本漂移。
+
+### 适配：伴随插件最新版集成面复核
+
+- **LivingMemory 2.7.0-beta.2** 移除独立 WebUI（`webui_settings` 与端口服务已删，`/lmem webui` 仅输出指引），官方插件页成为唯一面板入口。集成服务保留对旧版本（2.6.x）独立面板的探测（向后兼容），注释同步更新；图谱直读链路（`MemoryEngine.graph_store` / `get_graph_snapshot(session_id, persona_id, limit_*)` 签名与 nodes/edges/entries/memories 快照结构）经逐项核对与 2.7.0-beta.2 完全兼容，无需改动。
+- **Group Chat Plus V1.2.3.hotfix.2** 复核：`enable_web_panel`/`web_panel_host`/`web_panel_port` 属性被上游注释明确冻结（main.py「严禁重命名或删除」），`/panel` 与 dev_api 列出的全部端点仍在；新增的引用消息图片识别（#44、#48）属消息处理内部改动，不触及 self_learning 集成面，无需改动。
+
+### CI：测试环境升级到 AstrBot 最新稳定版
+
+- unit-tests 与 smoke-test 的 astrbot 钉版由 `>=4.14,<4.15`（smoke-test 的 3.14 分支为 `>=4.24,<5`）统一提升到 **`>=4.29,<5`**（PyPI 最新稳定版 4.29.0，与本地开发 venv 一致）。
+- AstrBot ≥4.29 要求 Python ≥3.12：unit-tests 由 3.11 升到 3.12，ci/commit-lint/issue-triage 的 setup-python 同步升到 3.12；smoke-test 矩阵由 3.10–3.14 收敛为 **3.12–3.14**，原先「3.14 需单独装新版 astrbot」的双安装分支随之合并。
+- 全部 workflow 的 `actions/checkout` v4→v7、`actions/setup-python` v5→v7、dashboard-ci 的 `actions/setup-node` v4→v7；`pnpm/action-setup@v4`、Node 22 与 `github/codeql-action@v4` 保持不变（仪表盘产物需与本地 pnpm 构建保持一致，Node/pnpm 工具链不动）。
+
+### 修复：web_src/package.json 版本号漏更
+
+- 4.2.8 的 bump 漏改 `web_src/package.json`（停在 4.2.7），`test_release_versions_are_synchronized` 在 main 上持续失败，但 unit-tests 工作流只在 PR 触发、直接推 main 的 bump 未被 CI 覆盖而未被发现；本 PR 补齐到 4.2.8。该字段不参与 Vite 构建产物，仪表盘产物无需重建。
+
+## [4.2.8] - 2026-10-08
+
+### 修复：`main.py` 中 `remember` 命令重复注册（PR #268）
+
+- 删除 `main.py` 中与规范定义完全相同的第二个 `remember_command` 方法。两处 `@filter.command("remember")` 使用相同的命令名、权限与实现，Python 后定义会静默覆盖前定义，同时给 AstrBot 的命令注册路径带来重复声明的隐患；保留的一处也有规范的空行分隔，与周围代码风格一致。
+- 由 @Joker-Principal 提交（PR #268），Sourcery AI 审核通过，CI 检查全绿。
+
+### 版本
+
+- 版本号由 4.2.7 提升至 **4.2.8**。
+
+## [4.2.7] - 2026-10-01
+
+### 修复：save_raw_messages 开关接入采集路径（issue #261）
+
+- `MessageCollector.collect_message` 入口检查 `save_raw_messages` 配置，关闭时跳过落库并返回 `False`；此前该开关只有声明没有任何消费点，设为 `false` 后 `raw_messages` 仍被无条件写入。
+- `HubService.ingest_message` 的无 collector 兜底路径（直接走 `database_manager.save_raw_message`）补同样的开关守卫，避免绕过。
+- `_conf_schema.json`、i18n（中/英）与 `docs/configuration.md` 的说明同步注明：关闭后 `raw_messages` 不再写入，渐进学习、黑话挖掘、社交分析等依赖该表的学习功能将没有新数据。
+- 新增回归测试：真实 sqlite 验证关闭时 0 行写入、开启时正常写入；hub 兜底路径同开关语义。
+
+### 修复：记忆图持久化恒失败与 memories.importance 量纲统一（issue #262、#264）
+
+- `MemoryRepository.create_memory` 此前向 ORM 传入 `tags`/`metadata`/`last_accessed_at`/`updated_at` 四个不存在的字段，`Base.create` 抛 `TypeError` 被吞掉返回 `None`，调用方仍打印成功日志——记忆图持久化静默失效。现补 `tags` 与 `metadata_` 列（沿用仓库 `metadata_` 命名惯例规避 SQLAlchemy 保留字，DB 列名仍为 `metadata`，缺失列由现有自动补列迁移处理），改用 `last_accessed` 列并去掉无中生有的 `updated_at`；`get_important_memories` 与 `update_access` 的 `last_accessed_at` 引用同步修正。
+- `save_memory_graph` 检查写入结果并输出 `成功/总数` 日志（不再打印与实际不符的成功信息）；按 concept 先查后更新，周期性自动保存不再重复插入；`load_memory_graph` 还原持久化的权重（importance/10）与 created_time/last_modified，重启后再保存不会用默认权重把重要度覆盖成 10；既有概念查重回读改为 `limit=None`，概念数超过 1000 的群不会因截断而重复插入。
+- `memories.importance` 保持 `Integer` 列，统一为 **0-10 整数量纲**：记忆图节点 weight（0-1）×10 映射并夹紧；`remember` 等整数写入方天然兼容。
+- 清理任务改读 `memory_cleanup_days` / `memory_importance_threshold` 配置（0-1 阈值 ×10 换算到 0-10 量纲），不再硬编码 30 天 / 0.3；显式 0 值不被回退吞掉；`_conf_schema.json` 与 WebUI 配置说明同步换算关系。
+- 新增真实 sqlite 回归测试：create_memory 真正落库、importance 夹紧、清理只删「超保留天数且低重要度」的行、记忆图保存幂等、清理阈值换算端到端生效、载入还原权重与时间戳。
+
+### 修复：话题检测在上下文缓冲饱和后永久停止（issue #263）
+
+- 话题检测限频基准此前取的是会截断到 100 条的缓冲区长度，缓冲区饱和后 `message_count - last_count` 恒为 0，群组话题检测从此不再触发。现维护按群单调递增的累计消息数作为基准，缓冲区截断不再影响触发节奏。
+- 新增配置 `topic_detection_min_interval_seconds`（默认 300 秒，0 为禁用）：修复后话题检测按「每 N 条消息一次」的真实节奏调用筛选模型，活跃群需要时间维度限频保护（参照表达方式学习 `expression_learning_min_interval_seconds` 惯例）。时间基准在检测成功后落地，LLM 失败不吞掉整个时间窗口；过期上下文清理时同步移除按群簿记，避免内存缓慢累积。
+- 新增回归测试：250 条消息把缓冲区压到上限后检测仍精确触发 25 次；时间限频与失败重试；清理簿记。
+
+### 版本
+
+- 版本号由 4.2.6 提升至 **4.2.7**。
+
+## [4.2.6] - 2026-09-26
+
+### 修复：对话目标分析 JSON 解析失败分类与修复能力（issue #259）
+
+- 修复 `utils/guardrails_manager.py` 的 `validate_and_clean_json` 在模型返回纯文本/思考内容时连续报 `JSON 解析失败: Expecting value: line 1 column 1 (char 0)` 且无法定位原因的问题：
+  - 解析前先剥离思考标签（`<think>` 等，推理型模型常见），思考内容不再干扰 JSON 提取。
+  - 失败原因按类别记录：空响应（输入为空）/ 无 JSON 结构的纯文本回复 / 有 JSON 结构但损坏 / Pydantic 字段校验失败，分别给出明确日志。
+  - 解析失败时的响应预览（前 200 字符）由 DEBUG 提升至 WARNING，便于用户直接从日志回贴定位。
+  - 修复兜底接入 `json-repair`（可选依赖，AstrBot 环境通常自带；未安装时静默跳过），可恢复截断、未加引号键等常规正则修复覆盖不了的情况。
+- `services/quality/conversation_goal_manager.py` 的初始目标分析与意图分析：LLM 返回为空或消毒后为空时显式归类（"提炼模型未返回内容" / "消毒后响应为空"）并直接走默认降级，不再流入误导性的 JSON 解析报错。
+- 新增回归测试 `tests/unit/test_guardrails_json_parsing.py`：覆盖空响应、纯文本分类、思考标签包裹、单引号/尾逗号修复、截断 JSON 兜底、字段校验失败与目标管理器空响应短路径。
+
+### 版本
+
+- 版本号由 4.2.5 提升至 **4.2.6**。
+
+## [4.2.5] - 2026-09-19
+
+### 修复（表达模式学习链路隐患，延续 issue #257）
+
+- 批量/审批链路的表达模式学习以前只拿到用户原始消息（`filtered_messages` 来自 `get_unprocessed_messages`，不含 bot 回复），而 `_extract_few_shot_pairs` 需要「用户→bot」相邻对话对，导致恒学习不到任何模式（issue #257 日志中的“未获得有效结果”）。现将合并数据库中 `BotMessage` 回复的逻辑下沉到 `ExpressionPatternLearner.trigger_learning_for_group`：仅在传入消息不含 bot 时按时间线自动合并，实时链路（已预合并）行为不变。
+- 修正 `PersonaUpdater.analyze_persona_compatibility` 调用 `get_current_persona()` 未传必填 `group_id` 导致的潜在 `TypeError`（改为接受并透传 `group_id`）。
+- 新增回归测试：以真实 sqlite 验证批量链路合并 bot 回复后能学到模式，并验证已含 bot / 无 db 时不重复查询。
+- 响应评审加固：合并查询限定在这批用户消息的时间窗口（末条向后 1 小时宽容窗口）内，避免与无关/更晚的 bot 回复误配对；改为先多取候选（≥ 60）再在内存过滤并截断，避免被 ignore 样本占满 limit 导致有效回复被漏。
+
+### 版本
+
+- 版本号由 4.2.4 提升至 **4.2.5**。
+
+## [4.2.4] - 2026-09-19
+
+### 修复：表达模式学习按群组/人格隔离降级为 default（issue #257）
+
+- 修复 `services/persona/persona_updater.py` 的 `_update_style_based_features_with_maibot`：该方法从 `current_persona` 上 `.get('group_id', 'default')` 取群组 ID，但 `current_persona` 是框架规范化后的人格对象，本身不含 `group_id` 字段，导致表达模式学习始终降级到 `group="default" / persona="default"`，真实群组学不到任何新模式、「按群组/按人格隔离学习」实际失效。
+- 调用方 `update_persona_with_style(group_id, ...)` 现显式向该方法透传真实 `group_id` 与 `persona_id`（人格标识），`trigger_learning_for_group` 同步带上 `persona_id`；记忆图谱与知识图谱节点改用解析后的真实 `group_id`。
+- 仅在调用方未传参时才回退到旧行为，保证向后兼容。
+- 新增回归测试 `tests/unit/test_learning_chain_regressions.py`：覆盖调用方透传与方法内不再降级为 default 两个环节。
+
+### 版本
+
+- 版本号由 4.2.3 提升至 **4.2.4**。
+
+## [4.2.3] - 2026-09-18
+
+### 黑话联网释义补充（低提及防空缺）
+
+- 补齐黑话学习流程的释义空缺缺口：提及次数不足首个推断阈值（3 次）的词条永远不会触发三步推断；推断时上下文不足（`no_info`）的含义也会留空——低提及词条的释义因此长期空缺、注入时被静默跳过。
+- 新增 `JargonWebDefinitionService`（`services/jargon/web_search_definition.py`）：复用 AstrBot 联网搜索配置（`provider_settings` 中与内置 web search 同名的密钥，支持 Tavily / BoCha / Exa / 百度千帆，`websearch_provider` 优先、其余按序兜底），检索公开释义线索后交由筛选模型归纳为简明释义（要求模型无法给出可信解释时不落地）。
+- 接入挖掘器两个空缺点：三步推断 `no_info` 分支、每轮学习中仍低于首推断阈值的低提及词条清扫（每轮最多 2 个、按出现次数降序，服务内部 10 秒全局限速）。
+- 语义约束：联网补充将词条置为 `is_jargon=True` 并带「联网检索」来源标注，但 `is_complete` 保持 False——后续按阈值触发的三步推断仍可用群内上下文修正；写回前重读数据库，不覆盖人工编辑、并发推断或已完成词条。
+- 开关：`jargon_websearch_enabled`（基础设置，默认开启）；未配置任何搜索密钥时自动不生效，零额外配置成本。文档同步更新（docs/learning-flow.md）。
+
+### 版本
+
+- 版本号由 4.2.2 提升至 **4.2.3**。
+
+## [4.2.2] - 2026-09-18
+
+### 命令消息直接放行（issue #254）
+
+- 新增 `enable_command_pass_through` 开关（默认开启）：以系统级命令前缀（`/` `!` `#` `.` 等）开头的命令消息会跳过 LLM Hook 上下文注入直接处理，避免功能命令（如其他插件的管理/工具命令）的响应被上下文拉取拉长。
+- 命令识别逻辑抽为 `CommandFilter.is_command_text`，与消息收集路径的命令过滤保持同一前缀约定。
+
+### LightRAG LLM 响应缓存治理（issue #253）
+
+- 修复 `kv_store_llm_response_cache.json` 无上限增长（长期运行单群可达 500MB+，冷加载 5~7 秒并触发 LLM Hook 批量超时）：插件构造 LightRAG 时显式关闭 `enable_llm_cache` 与 `enable_llm_cache_for_entity_extract`，可通过新增配置 `lightrag_enable_llm_cache`（默认关闭）开启。
+- 缓存关闭时自动清理历史残留：知识管理器启动时与每个群实例创建前会删除旧的 `kv_store_llm_response_cache.json`（该文件为纯缓存，删除后 JsonKVStorage 以空缓存加载，不影响图谱与向量数据）。
+- 新增管理员命令 `/clean_rag_cache`：手动清理全部（或指定）群的 LLM 响应缓存，热实例走 LightRAG `aclear_cache` API，冷群直接移除缓存文件，并报告释放空间。
+
+### 审查修复
+
+- `/clean_rag_cache` 的群号参数按安全格式校验（仅接受字母/数字/下划线/连字符/冒号，拒绝路径穿越）；缓存文件删除前校验目标路径始终位于 LightRAG 数据目录内。
+- 缓存清理与群实例初始化共用同一把 per-group 锁并在锁内重新判定冷/热，消除并发初始化时"刚清理的缓存被新实例复活"的竞态。
+
+### 版本
+
+- 版本号由 4.2.1 提升至 **4.2.2**。
+
+## [4.2.1] - 2026-09-12
+
+### LivingMemory 2.7 适配
+
+- 功能融合页新增 LivingMemory **官方面板**入口：LivingMemory 2.6.0 起移除独立 WebUI、改为自带 AstrBot 官方插件页（`pages/dashboard/index.html`）。集成服务现在会自动探测插件 `pages/` 目录与 AstrBot 主配置 `dashboard.host/port`，生成 `dashboard.official_page_url`（AstrBot Dashboard 前端 hash 路由 `/#/plugin-page/<插件名>/<页名>`）。
+- 功能融合页 LivingMemory 卡片新增「官方面板」按钮（新窗口打开，复用浏览器内 AstrBot 会话 JWT）；LivingMemory 嵌入壳由「面板不可用」改为「面板禁止内嵌 + 新窗口打开」（官方插件页固定返回 `X-Frame-Options: SAMEORIGIN` 且资产需 JWT 换取，iframe 无法携带凭据，属预期行为，`embeddable` 相应置为 `false`）。
+- 伴随插件契约核对（对照 livingmemory 2.7.0-beta.1、group_chat_plus V1.2.3.hotfix.2）：注册名、`initializer.memory_engine`、`memory_engine.graph_store`、`graph_store.get_graph_snapshot` 签名与返回键、`memory_engine.get_statistics` 全部保持，本地记忆图谱直读链路无需改动；LivingMemory 2.6.x 引入的全量快照防御上限只作用于本插件未调用的 `get_full_graph_snapshot`。
+- AstrBot 兼容性核对至 v4.28（commit e606a3037）：本插件使用的全部 API 面（`astrbot.api.*`、`astrbot.api.event.filter`、`astrbot.api.web.request`、provider/star/config 工具）在 v4.28 中无变更。
+
+### 版本
+
+- 版本号由 4.2.0 提升至 **4.2.1**。
+
+## [4.2.0] - 2026-09-05
+
+### 黑话导入
+
+- 黑话系统新增批量导入：可直接导入**关键词 + 解释**，导入即落库为已确认词条（`is_jargon` + `is_complete`），无需等待学习管线推断。
+- 导入文本每行一条，支持「关键词 = 解释」「关键词：解释」「关键词|解释」及 Tab 分隔；`#` 或 `//` 开头视为注释；无释义的词条允许导入（可后续在词库中编辑补充）。
+- 重复处理：目标范围内已确认的同名词跳过；同名的未确认候选升级为已确认并写入导入释义。
+- 作用域：可导入到指定群组，也可选择**全局共享**（对所有群生效）；仅全局作用域的行不再在黑话群组列表中产生空白分组。
+- 入口：独立 WebUI「黑话学习」页新增导入面板（范围选择 + 结果报告，含失败行明细）；AstrBot 官方插件页黑话模块同步提供导入入口（桥接 `import_jargons` action）；后端端点 `POST /api/jargon/import`。
+
+### 审查修复
+
+- 解析失败的行保留在导入报告的失败明细中并计入总数；全部无效时返回逐行明细而非笼统报错。
+- `is_global` 严格解析（布尔与常见字符串形式，其余一律 False），宽松调用方传 `"false"` 不再误开全局；蓝图与插件页桥接原样透传由服务层统一解析。
+
+### 版本
+
+- 版本号由 4.1.1 提升至 **4.2.0**。
+
+## [4.1.1] - 2026-09-05
+
+### WebUI 自定义密码
+
+- 新增「WebUI 访问密码」设置面板：免密模式下可直接设置**自定义密码**并启用密码保护（`POST /api/webui_password/setup`，带 `manual_confirmed` 确认标记与密码强度校验），不再只能依赖临时初始密码；已启用模式下支持在面板内直接修改密码（旧密码 + 新密码）。
+- 启用 `enable_webui_password` 时显式调用 `save_config()` 持久化插件配置，避免重启后回退免密。
+- 设置自定义密码与修改密码成功后都会**清空当前会话并整页跳转登录页**，要求输入新密码重新进入监控板；独立 `change_password.html` 页面沿用同一跳转。
+- 设置页顶部导航滚动条改为无滚动条设计：滚轮直接横向滑动导航栏（垂直滚轮转横向，到两端时放行页面滚动）。
+- 新增「自定义样式 (CSS)」设置面板：用户可在文本区编写自定义 CSS，`保存并应用` 即时生效（localStorage 持久化，按浏览器保存），`重置默认风格` 一键清除自定义 CSS 与主题覆盖并刷新恢复默认。前端所有组件挂载独一无二的 `slx-` 前缀稳定样式钩子（如 `slx-panel`、`slx-btn`、`slx-nav-item`、`#slx-app` 根容器与 `--primary`/`--radius` 等设计变量），用户可精准定位任意元素，不会与其它样式互相干扰；钩子清单内置于面板文档。
+- 修复设置页开关控件渲染为无样式裸复选框的存量问题（`switch-field` 类名未被构建产物包含）。
+
+## [4.0.0] - 2026-09-03
+
+### 版本
+
+- 因独立 WebUI 底层框架由 Quart 迁移至 FastAPI（破坏性架构变更，见 3.7.0 条目），版本号由 3.7.0 提升至 4.0.0；插件元数据、运行时包、Dashboard 和文档六处同步。
+
+## [3.7.0] - 2026-09-02
+
+### WebUI 框架重构（Quart → FastAPI）
+
+- 独立 WebUI 底层由 Quart + Hypercorn 迁移至 FastAPI + uvicorn，与 AstrBot core v4.26+ 的 ASGI 技术栈对齐；新增 `webui/compat.py` 兼容层承载既有蓝图的 Quart 风格处理器（模块级 `request`/`session` 代理、`jsonify(...) , status` 元组返回），19 个蓝图文件仅需更换导入行，行为保持不变。
+- 会话机制迁移到 starlette `SessionMiddleware`（itsdangerous 签名 cookie），保留 HttpOnly + SameSite=Lax 与 7 天有效期配置；旧 Quart 会话 cookie 将自然失效，需重新登录。
+- 服务线程改用 `uvicorn.Server`（`install_signal_handlers=False` 非主线程安全模式），端口清理与启动校验逻辑保持不变。
+- `requirements.txt` 由 `quart`/`quart-cors` 改为 `fastapi>=0.124.0`/`uvicorn>=0.30.0`/`itsdangerous>=2.2.0`（AstrBot core 自带，声明用于最小化安装）；WebUI「依赖安装」基础清单同步替换。
+- 集成测试通过 `webui.compat` 的 Quart 兼容 test_client 原样运行（含重定向不跟随、`session_transaction` 语义）；`test_webui_manager_imports_without_manual_web_dependencies` 更新为新契约：禁用 quart/hypercorn 导入时服务器创建必须成功。
+
+### 兼容性（AstrBot v4.26.0 → v4.27.5）
+
+- 逐项核查 v4.26.0 至 v4.27.5 的 14 个版本对插件可见的变更：FastAPI 迁移与 `register_web_api` 桥接、插件页扫描路由、`PersonaManager.update_persona`/`get_default_persona_v3` 签名、`StarTools.get_data_dir`、消息媒体处理统一、`astrbot.api.logger` 插件级日志路由、KV 存储清理与插件/工具启用状态拆分等，确认全部兼容。
+- 将 3 处已废弃的 `Context.get_using_provider()` 同步调用迁移至异步接口：新增 `utils/framework_compat.py` 兼容层，v4.27+ 优先使用 `get_using_provider_async()`（消除运行时 DeprecationWarning），旧版本自动回退同步接口。
+
+### 安全加强
+
+- WebUI 密码哈希由 MD5+盐值升级为 PBKDF2-HMAC-SHA256（390,000 次迭代）；历史**明文**口令在登录成功后自动透明迁移，无需用户干预。**旧版 MD5 哈希配置不再参与验证**（弱哈希直接拒绝登录并要求一次性重置；经查现有部署无 MD5 配置实例，实际无影响）；所有口令比较均使用恒定时间比较。
+- WebUI 免密模式保持不变（防止用户把自己锁在面板外），新增 `/api/password_status` 状态端点，前端在免密时展示一次「建议启用 WebUI 密码」提醒，可一键关闭不再打扰。
+- CORS 不再返回 `Access-Control-Allow-Credentials: true`（原 Quart 回退路径会对任意 Origin 反射凭据授权），避免免密会话数据被跨站读取。
+- 所有 WebUI 响应新增 `X-Content-Type-Options`/`X-Frame-Options`/`Referrer-Policy`/`Permissions-Policy` 安全响应头。
+- 端口占用探测由 `bind` 改为 `connect` 探测，消除对通配地址的绑定。
+
+### 版本
+
+- 将插件元数据、运行时包、Dashboard 和文档版本统一提升至 `3.7.0`。
+
+## [3.6.4] - 2026-08-29
+
+### 黑话学习
+
+- 修复黑话被收录后长时间无法解释的问题，修复 [#245](https://github.com/NickCharlie/astrbot_plugin_self_learning/issues/245)：候选统计的排除查询未区分确认状态，把 `is_jargon IS NULL` 的待确认词条一并排除，导致候选出现次数始终无法累加到推断阈值。现显式传入 `only_confirmed=True`，仅排除已确认黑话；待确认候选继续参与统计，重复出现时正常累加 count，达到 3 次后触发含义推断。
+- V2 学习批处理路径同步应用相同的确认状态过滤，避免启用 V2 学习时出现同样的问题；`_get_existing_jargon_terms()` 的方法说明同步更新为「返回已确认词条」。
+
+### 测试
+
+- 新增单元测试覆盖：统计查询正确传递 `only_confirmed=True`；旧版学习流程不再排除待确认候选；V2 黑话批处理流程使用相同的确认状态过滤。
+
+### 版本
+
+- 将插件元数据、运行时包、Dashboard 和文档版本统一提升至 `3.6.4`。
+
+## [3.6.3] - 2026-08-28
+
+### 集成兼容性
+
+- 适配 Group Chat Plus 最新面板安全策略：其 Web 面板（v1.2.x 起）固定返回 `X-Frame-Options: DENY` 与 CSP `frame-ancestors 'none'`，且未支持 `?embed=1` 参数，导致「回复策略」页的内嵌 iframe 被浏览器静默拦截、只显示空白框。现由集成服务探测面板真实响应头（结果缓存 60 秒），被阻止时自动降级为 external 模式：嵌入壳展示明确提示与「新窗口打开」入口，面板可达性同时作为可用性依据。
+- 复核 LivingMemory 2.6.0-beta.3 契约：插件注册名、`initializer.memory_engine`、`memory_engine.graph_store`、`get_graph_snapshot(...)` 签名与 `get_statistics()` 在 mixin 重构后全部保持不变，graph_store 直读适配器无需改动；其独立 WebUI 配置（`webui_settings`）已被官方插件页面机制取代，现有代码已按「本地图谱」模式优雅降级。
+
+### 构建
+
+- 修复 Dashboard `build` 工作流的产物一致性检查：`web_res/static/dashboard/index.html` 自 3.6.x 起（Windows 直接提交）为 CRLF，而 CI 在 Linux 上构建产出 LF，导致 `git diff --exit-code` 整文件报差异。现统一为 LF 并新增 `.gitattributes` 将 `web_src/index.html` 与该产物固定为 `text eol=lf`，避免双平台行尾漂移复发。
+
+### 代码审查修正
+
+- 按 Sourcery 审查意见修正嵌入探测实现：阻塞的 HTTP 探测移入 executor 执行并通过 in-flight future 合并同一面板的并发探测，避免卡住 Quart 事件循环；`frame-ancestors` 白名单改为按父页面（WebUI Dashboard）真实 origin 逐项匹配（含 `*.` 通配、端口与协议校验），修复 `'self'` 与显式放行源共存时被误判为禁止嵌入的问题；`IntegrationService.get_status/get_embed_target` 随之改为 async，同步更新 hub 服务、page_api 与相关测试桩。
+
+### 版本
+
+- 将插件元数据、运行时包、Dashboard 和文档版本统一提升至 `3.6.3`。
+
+## [3.6.2] - 2026-08-21
+
+### WebUI
+
+- 修复设置页「人格合并策略」下拉框强制显示「替换」、无法单独保存的问题：Solid 编译产物先应用 select 的 value 属性、后插入选项，真实浏览器对无选项的 select 设置 value 不生效导致回退选中第一项，现由共享 Select 组件在挂载后再同步一次值，修复 [#243](https://github.com/NickCharlie/astrbot_plugin_self_learning/issues/243)。
+- 新增组件级与设置页回归测试，并重建生产 Dashboard 静态资源。
+
+### 版本
+
+- 将插件元数据、运行时包、Dashboard 和文档版本统一提升至 `3.6.2`。
+
+## [3.6.1] - 2026-07-26
+
+### 元数据兼容性
+
+- 将最低 AstrBot 版本约束迁移到框架正式识别的顶层 `astrbot_version` 字段，确保安装和加载阶段能够执行版本校验。
+- 将支持平台迁移到正式的 `support_platforms` 字段，并移除 AstrBot 未定义的通用 `qq` 适配器 ID，修复 [#242](https://github.com/NickCharlie/astrbot_plugin_self_learning/issues/242)。
+- 新增元数据回归测试，防止重新使用框架无法识别的旧字段。
+
+### 版本
+
+- 将插件元数据、运行时包、Dashboard 和文档版本统一提升至 `3.6.1`。
+
+## [3.6.0] - 2026-07-25
+
+### 影子模式
+
+- 新增影子模式，可从现有群聊或导入的 QQ 聊天记录中按用户名和 QQ 号选择学习对象，并在学习完成后启用其表达风格。
+- 影子画像持久化保存句长、标点、语气比例和代表性示例；每个目标群聊同一时间仅启用一个画像。
+- LLM Hook 注入当前群聊的影子画像，同时加入身份冒充限制和提示词注入防护。
+
+### 聊天记录导入
+
+- QQ 聊天记录预览会陈列全部解析用户、QQ 号和消息数量，支持先选择目标用户再导入、学习并启用。
+- 原始消息新增 QQ 号持久化字段，并为现有数据库提供自动迁移兼容。
+
+### WebUI 与 API
+
+- 新增影子模式管理页面、导航入口和候选用户选择流程，覆盖桌面端与移动端布局。
+- 新增影子模式状态、候选用户、画像创建和画像更新 API，并补充服务层、路由和前端回归测试。
+- 强化集成页的导入状态与错误处理，生产 Dashboard 静态资源同步更新。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.6.0`。
+
+## [3.4.2] - 2026-06-18
+
+### 集成
+
+- 新增 SillyTavern 世界书预览、导入与导入历史接口，可将世界书条目写入现有学习审查、黑话和知识图谱数据。
+- WebUI 世界书导入不再接受请求传入的服务端路径，避免通过 `json_path`/`worldbook_path` 读取任意本地文件。
+- 世界书导入器支持顶层数组格式 payload，并补充对应回归测试。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.4.2`。
+
+## [3.4.0] - 2026-06-14
+
+### 自学习中枢
+
+- 新增 `remember` 命令，支持学习用户引用的对话及其上下文，并链入表达方式和对话示例。
+- 新增 `/api/hub/v1/*` HTTP API，将自学习能力按 AOP 与 MVC 分层暴露为可复用中枢接口，方便其他插件接入上下文构建、记忆写入、消息摄取、学习触发、审核、图谱和指标能力。
+- 新增 Hub API 稳定响应信封、可选 API Key 鉴权、接口清单与集成文档，明确其他插件作为自学习平台消费者的对接方式。
+
+### 集成
+
+- 增加伴随插件发现与集成状态描述，便于 LivingMemory、Group Chat Plus 等插件按能力委托或复用 Self Learning 服务。
+- 补充 Hub API、集成发现和静态资源相关测试覆盖。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.4.0`。
+
+## [3.3.0] - 2026-06-11
+
+### 性能优化
+
+- LLM Hook 动态上下文默认注入 AstrBot `extra_user_content_parts`，并在框架支持时标记为临时 `TextPart`，避免写入对话历史。
+- 保持 `system_prompt` 稳定，减少每轮动态上下文对 provider prefix cache 命中的破坏。
+- 保留旧版 AstrBot 的 `system_prompt` / `prompt` fallback，并更新 WebUI 设置提示与文档说明。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.3.0`。
+
+## [3.2.9] - 2026-06-11
+
+### 配置提醒
+
+- 在 LightRAG 使用 hybrid/mix 查询且允许委托 LivingMemory 时，配置校验、WebUI 设置页和集成状态页会显示非阻塞成本提醒。
+- 独立 WebUI 与 AstrBot 内嵌 Dashboard 统一展示“成本提醒”，提示该组合可能叠加检索与记忆流程并显著增加 LLM 调用和 token 消耗。
+- 补充配置与集成文档，说明高成本组合的影响以及建议改用 local/naive 或只保留一种记忆/检索策略。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.9`。
+
+## [3.2.8] - 2026-06-11
+
+### 实时学习
+
+- 修复关闭实时学习/筛选后仍可能产生高频模型调用的问题，并增加表达学习冷却开关。
+- 默认关闭 LLM Hook 注入，减少非预期上下文构建与模型调用。
+
+### WebUI 安全
+
+- 新增可选 WebUI 密码认证，默认关闭。
+- 移除硬编码默认 WebUI 密码，启用密码模式时必须显式配置初始密码或环境变量。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.8`。
+
+## [3.2.7] - 2026-06-10
+
+### MaiBot 迁移
+
+- 修复 MaiBot 学习数据导入结果展示混淆的问题，表达方式、黑话和 A_memorix 记忆现在明确进入各自的审查/学习目标。
+- MaiBot 导入预览和导入结果增加分类去向与待审拆分统计，便于确认表达不会被误认为人格学习。
+- 修复 Web 表单传入字符串布尔值时 `"false"` 被当作开启的问题，避免导入开关失效。
+
+### 实时学习
+
+- 修复关闭实时 LLM 筛选后仍把每条实时消息写入 `filtered_messages` 并增加筛选统计的问题，避免筛选模型调用与统计异常。
+- LLM Hook 的社交上下文注入现在尊重 `enable_social_context_injection`，关闭后不再触发社交行为指导构建。
+
+### WebUI 审查
+
+- 为独立 WebUI 与 AstrBot 内嵌 Dashboard 增加人格更新、表达审查和黑话候选的批量通过/拒绝入口。
+- 新增风格学习审查与黑话候选的批量审查 API，并复用现有单条审查逻辑以保持应用副作用一致。
+- 新增表达审查和黑话候选的批量删除 API；内嵌 Dashboard 支持勾选后批量审核、拒绝和删除黑话、表达方式与人格审核项。
+- 审查队列中的人格列表不再混入风格学习记录，避免“记忆/主题/表达都跑到人格那边”的观感。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.7`。
+
+## [3.2.6] - 2026-06-10
+
+### 人格学习
+
+- 修复实时学习、上下文分析和 MaiBot 记忆导入产生的主题、记忆与表达风格会直接写入 AstrBot 人格的问题。
+- 学习到的人格上下文现在会先进入 WebUI 人格审查队列，待人工确认后再应用到当前人格。
+- 对运行时上下文审查增加去重，避免同一群组重复堆积待审条目。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.6`。
+
+## [3.2.5] - 2026-06-09
+
+### MaiBot 迁移
+
+- 新增 MaiBot 学习数据导入/导出桥，支持从 MaiBot 主库读取表达方式、黑话、会话映射和聊天摘要记忆。
+- 支持读取 A_memorix `metadata.db` 段落，并可从 `config/a_memorix.toml` 自动发现 `storage.data_dir`。
+- 将 MaiBot 已确认表达导入为已批准表达方式学习记录，并同步写入表达模式；黑话与记忆段落导入到插件现有黑话与人格审查流程。
+
+### WebUI
+
+- 在独立 WebUI 和 AstrBot 内嵌 Dashboard 增加 MaiBot 学习数据预览、导出和导入入口。
+- 导入开关支持字符串布尔值解析，避免 Web 表单传入 `"false"` 时被误判为启用。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.5`。
+
+## [3.2.4] - 2026-06-08
+
+### AstrBot WebUI
+
+- 修复内嵌插件页黑话、表达方式和人格条目的编辑操作无响应问题，补齐表达方式更新 API 与人格编辑保存流程。
+- 优化右上角提示为单条可关闭通知，避免旧提示长时间残留或多条堆叠。
+- 将人格配置默认值改为跟随 AstrBot 当前人格，并对 `default` 占位人格回退告警进行节流，避免日志刷屏。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.4`。
+
+## [3.2.3] - 2026-06-08
+
+### AstrBot WebUI
+
+- 修复内嵌插件页人格学习模块在长提示词、长备份名和窄屏布局下的横向溢出，提示词预览现在会在面板内滚动。
+- 优化记忆图谱与知识图谱的内嵌页绘制逻辑，改为稳定中心布局、温和归位和固定比例画布，避免节点挤到四角或图表被拉伸。
+- 收敛 Dashboard 物理动效强度，并支持 `prefers-reduced-motion`，使内嵌页动画更简洁温和。
+- 修复内嵌设置页依赖安装按钮反馈不明显的问题，并兼容旧版插件页确认字段，确保手动安装请求能正确触发并显示输出。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.3`。
+
+## [3.2.2] - 2026-06-08
+
+### AstrBot WebUI
+
+- 将完整 WebUI 功能接入 AstrBot 官方内嵌插件页，新增 Dashboard、AI 巡检、监控、审查队列、黑话学习、表达方式学习、人格学习、学习内容、图谱、回复策略、功能融合和设置等独立子模块。
+- 新增内嵌插件页桥接 API，覆盖模块聚合数据、学习内容、图谱、监控、集成、设置和审查操作，避免内嵌页依赖独立 WebUI 端口。
+- 修复记忆图谱与知识图谱在内嵌页中被拉伸、节点挤到四角且无法拖拽的问题；图谱现在按容器尺寸同步画布、居中布局，并支持指针拖拽节点。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.2`。
+
+## [3.2.1] - 2026-06-07
+
+### AstrBot WebUI
+
+- 新增 AstrBot 官方内嵌插件页入口 `#/plugin-page/astrbot_plugin_self_learning/dashboard`，可在 AstrBot Dashboard 内直接查看自学习概览。
+- 新增官方插件页后端 API `/astrbot_plugin_self_learning/page/overview`，复用现有运行时服务容器聚合黑话学习、表达方式学习、人格学习、人格备份和智能指标状态。
+- 内嵌 Dashboard 提供模块化信息卡、快捷入口、可视化进度图和 iOS-like spring 物理反馈动效，同时保留独立 WebUI 的快捷跳转。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.1`。
+
+## [3.2.0] - 2026-06-07
+
+### 学习模块
+
+- 将黑话学习、表达方式学习和人格学习拆分为独立服务模块，学习流水线与渐进学习流程改为委托给专门模块处理。
+
+### WebUI
+
+- Dashboard 新增学习模块控制台，汇总全局学习效率、待办、内容样本和最近批次，并提供黑话、表达方式、人格、审查、内容和监控快捷入口。
+- 新增黑话学习、表达方式学习、人格学习三个独立 WebUI 子模块页面，分别展示 KPI、列表、快捷操作和 ECharts 可视化图表。
+- 增加 iOS-like 指针物理反馈、按压回弹和移动端响应式收敛，并尊重 `prefers-reduced-motion`。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.2.0`。
+
+## [3.0.15] - 2026-05-30
+
+### WebUI
+
+- Dashboard 黑话搜索在关键词搜索时会继续遵守全局/本地筛选，避免筛选后搜索结果越界。
+- 更新 Dashboard 删除确认和黑话挖掘触发相关回归测试，使其覆盖当前自定义确认弹窗和消息计数缓存行为。
+
+### 黑话
+
+- LLM 黑话查询只注入已确认的本群黑话；全局回退只读取已确认且全局共享的黑话，避免未确认候选或其他群本地黑话进入回复上下文。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.15`。
+
+## [3.0.14] - 2026-05-28
+
+### WebUI
+
+- 人格审查和风格审查新增批准前后人格内容对比。待审项会展示当前人格与应用后的 `system_prompt` / `begin_dialogs` 预览，风格审查会明确标出追加到 `begin_dialogs`。
+- 批准并自动应用人格变更后，会保存变更快照，并在最近已审人格记录中展示当时的前后 diff，便于事后排查。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.14`。
+
+## [3.0.13] - 2026-05-28
+
+### WebUI
+
+- 修复记忆图谱/知识图谱页面在 V2 Mem0 或 LightRAG 已有数据时仍显示 0 节点的问题。Dashboard 现在会读取运行中的 Mem0 记忆和 LightRAG GraphML 图谱，并继续保留 LivingMemory 委托空态提示。
+
+### 数据库
+
+- 修复 PostgreSQL 下黑话保存遇到重复 `(chat_id, content)` 时可能抛出唯一约束错误的问题。黑话保存现在对 PostgreSQL 使用原子 upsert。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.13`。
+
+## [3.0.12] - 2026-05-27
+
+### 数据库
+
+- PostgreSQL 配置不可用、连接失败或健康检查失败时，数据库管理器会自动回退到本地 SQLite `messages.db`，并继续同步 ORM 表结构和初始化服务 Facade，避免数据库功能完全不可用。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.12`。
+
+## [3.0.11] - 2026-05-27
+
+### WebUI
+
+- 修复数据库管理器启动失败时 WebUI Dashboard 也无法启动的问题。现在 PostgreSQL 配置错误或认证失败时，WebUI 会以数据库受限模式继续启动，便于进入全量设置修正数据库密码等配置。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.11`。
+
+## [3.0.10] - 2026-05-27
+
+### WebUI
+
+- WebUI 全量设置保存时改为全量透传到 AstrBot 插件设置页分组配置，并清理旧顶层兼容键，避免刷新后又读回旧值。
+- WebUI 服务注册前会复用并启动插件生命周期中的数据库管理器，避免 PostgreSQL 已运行但 Dashboard 仍提示数据库尚未启动。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.10`。
+
+## [3.0.9] - 2026-05-27
+
+### WebUI
+
+- 修复 WebUI 全量设置刷新后可能重新读取旧值，导致插件设置页与 WebUI 设置不同步的问题。
+- 新增 WebUI 手动保存设置按钮，并让保存按钮状态准确反映配置是否已加载、是否有未保存改动以及保存进度。
+- 修复 AstrBot 插件设置页 `AstrBot日志等级` 选项显示为 `[object Object]` 的问题。
+- 修复 `启用实时学习` 和 `启用实时LLM筛选` 在插件设置页已开启，但 WebUI 仍显示关闭的问题。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.9`。
+
+## [3.0.8] - 2026-05-26
+
+### WebUI
+
+- 修复数据库 JargonFacade 尚未初始化时 WebUI 黑话统计和黑话列表可能抛出 `NoneType.get_jargon_statistics` / `NoneType.get_jargon_count` 错误的问题。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.8`。
+
+## [3.0.7] - 2026-05-26
+
+### WebUI
+
+- 修复数据库 LearningFacade 尚未初始化时 WebUI 人格审查页可能抛出 `NoneType.get_pending_persona_learning_reviews` 错误的问题。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.7`。
+
+## [3.0.6] - 2026-05-26
+
+### WebUI
+
+- WebUI 全量设置保存后同步写入 AstrBot 插件设置页的分组配置，并刷新目标过滤和渐进学习等运行时缓存配置。
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.6`。
+
+## [3.0.5] - 2026-05-26
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.5`。
+
+## [3.0.4] - 2026-05-25
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.4`。
+
+### 学习系统
+
+- 避免将 AstrBot 指令、帮助输出、框架错误和超时提示写入学习样本、few-shot 对话对和训练导出数据。
+- 收窄指令识别规则，只过滤显式命令白名单，避免误丢普通用户表达。
+
+### WebUI
+
+- 审查队列展示风格表达模式、few-shot 样例、黑话释义和上下文示例。
+- LivingMemory 委托记忆后，图谱页面展示明确的数据来源和委托提示，不再只显示空图谱。
+
+## [3.0.3] - 2026-05-23
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.3`。
+
+### 功能融合
+
+- 新增 LivingMemory / Group Chat Plus 检测与能力委托。
+- LivingMemory 已加载时，跳过本插件本地长期记忆写入和注入。
+- Group Chat Plus 已加载时，跳过本插件本地回复器。
+- 新增 Dashboard `功能融合` 页面，展示 companion 插件状态、面板入口、开发 API 和 `Integration_Settings`。
+
+### WebUI
+
+- Dashboard 首页保留模块缩略入口，功能页按需加载，避免首页请求图谱和学习内容重接口。
+- 依赖安装拆分为 `基础能力依赖` 和 `全能力依赖`。
+- Provider 选择按 AstrBot Provider 类型过滤，Embedding / Reranker 不再混入聊天模型。
+- 数据管理的一键清空现在覆盖黑话、表达方式、知识图谱、记忆、人格学习和运行态学习画像，并清理本地 LightRAG/Mem0 文件缓存。
+
+### 文档
+
+- 新增 `docs/integrations.md`。
+- 更新配置、使用、WebUI API 和开发文档。
+
+## [3.0.1] - 2026-05-23
+
+### WebUI
+
+- 将监控板拆分为模块首页和独立 hash 页面，主页面只保留模块缩略入口。
+- 保留现有 WebUI API 与轻量运行时，新增模块入口和页面结构回归测试。
+
+## [3.0.0] - 2026-05-22
+
+### 版本
+
+- 将插件发布版本号提升至 `3.0.0`。
+
+## [Next-2.1.0] - 2026-03-11
+
+### 新功能
+
+#### 数据管理面板
+- 系统偏好设置中新增「数据管理」，可按模块查看和清空插件数据
+- 5 个独立清空按钮：消息数据、人格审查、对话风格、黑话、学习历史
+- 一键清空全部数据，每次操作均有确认弹窗防止误触
+- 实时显示各模块数据量
+
+#### Bot 消息自动采集
+- 自动记录 Bot 所有回复消息，用于对话风格学习中的对话对提取
+- 通过 `enable_message_capture` 配置项开关控制
+
+#### 黑话学习质量提升
+- 新增词频过滤和批量预筛选，减少无意义词条进入黑话库
+
+#### 社交关系图分享
+- 支持生成分享链接，将社交关系图导出给他人查看
+
+### Bug 修复
+
+- **依赖冲突**：不再锁定与 AstrBot 框架重复的 7 个依赖版本，避免升级框架时出错
+- **旧版 AstrBot 兼容**：部分导入在旧版本上不存在时自动降级，不再导致启动崩溃
+- **插件加载失败无提示**：修复插件内部吞异常导致 AstrBot 误以为加载成功的问题，现在加载失败会正确显示在面板中
+- **长消息存储溢出**：转发消息等超长内容会自动截断，不再因超出 MySQL 字段限制而报错
+- **CORS 错误**：修复升级 quart 后 WebUI 接口全部 500 的问题
+- **人格审查记录消失**：修复对话风格学习结果全部自动批准、不出现在审查面板中的问题
+- **WebUI 会话丢失**：修复重启后需要重新登录的问题
+- **社交关系分析报错**：改善分析过程中的错误处理，减少无意义的错误日志
+
+## [Next-2.0.6] - 2026-03-02
+
+### 新功能
+
+#### WebUI 监听地址可配置
+- 新增 `web_interface_host` 配置项，允许用户自定义 WebUI 监听地址（默认 `0.0.0.0`）
+
+### Bug 修复
+
+#### SQLite 并发访问错误
+- 修复 SQLite 连接池使用 `StaticPool`（共享单连接）导致 WebUI 并发请求事务状态污染的问题
+- 改为 `NullPool`，每个会话获取独立连接，消除 "Cannot operate on a closed database" 错误
+
+#### 插件卸载 CPU 100%
+- 移除 WebUI 关停流程中 `server.py` 和 `manager.py` 的两次 `gc.collect()` 调用
+- 每次 `gc.collect()` 遍历 ~200 个模块的对象图耗时 80+ 秒，导致卸载期间 CPU 满载
+
+#### 命令处理器空指针
+- 为全部 6 个管理命令（`learning_status`、`start_learning`、`stop_learning`、`force_learning`、`affection_status`、`set_mood`）添加空值守卫
+- 当 `bootstrap()` 失败导致 `_command_handlers` 为 `None` 时，返回友好提示而非抛出 `'NoneType' object has no attribute` 异常
+
+#### 人格审查系统
+- 修复撤回操作崩溃和已审查列表数据缺失问题
+- 修复风格学习审查记录在已审查历史中显示空内容、类型"未知"、置信度 0.0% 的问题，补全 `StyleLearningReview` 到前端统一格式的字段映射
+- WebUI 风格统计查询改用 Facade 而非直接 Repository 调用
+
+#### MySQL 8 连接
+- 禁用 MySQL 8 默认 SSL 要求，解决 `ssl.SSLError` 连接失败
+- 强化会话生命周期管理
+
+#### ORM 字段映射
+- 修正心理状态和情绪持久化的 ORM 字段映射
+- 使用防御性 `getattr` 处理 ORM-to-dataclass 组件映射中的缺失属性
+
+#### 其他修复
+- WebUI 使用全局默认人格代替随机 UMO
+- WebUI 响应速度指标无 LLM 数据时使用中性回退值
+- 黑话 meaning 字段 dict/list 类型序列化为 JSON 字符串后写入数据库
+- 批量学习路径中正确保存筛选后的消息到数据库
+- 防护 `background_tasks` 在关停序列中的访问安全
+
+### 测试
+- 新增核心模块单元测试，扩展覆盖率配置
+
+## [Next-2.0.5] - 2026-02-24
+
+### Bug 修复
+
+#### 插件卸载/重载 CPU 100%（间歇性）
+- 修复 `on_message` 中 `asyncio.create_task()` 产生的后台任务（`process_learning`、`process_affection`、`mine_jargon`、`process_realtime_background`）未被跟踪的问题，卸载时无法取消导致僵尸任务持续消耗 CPU
+- `main.py` 新增 `_track_task()` 方法，所有 fire-and-forget 任务注册到 `background_tasks` 集合
+- `MessagePipeline` 新增 `_subtasks` 跟踪集合和 `_spawn()` 方法，替代裸 `asyncio.create_task()`
+- 新增 `cancel_subtasks()` 方法，关停时批量取消流水线内部子任务
+- 新增 `_shutting_down` 标志位，关停序列第一步即设置，阻止 `on_message` 继续产生新任务
+- 修复 `asyncio.shield(task)` 反模式：`wait_for` 超时后只取消 shield 而非实际任务，导致超时后任务变为不可回收的僵尸。已从 `plugin_lifecycle.py` 和 `group_orchestrator.py` 中移除 `asyncio.shield`
+- 调整关停顺序：V2LearningIntegration 在服务工厂之前停止，确保 buffer flush 可使用完整服务
+
+#### 插件重启后每条消息都触发学习任务
+- 修复 `GroupLearningOrchestrator` 中 `_last_learning_start` 时间戳为纯内存字典，插件重启后清空导致每个群的首条消息无条件触发学习的问题
+- 新增 `_load_last_learning_ts()` 懒加载方法，从 `learning_batches` 表恢复上次学习时间戳，每个群仅查询一次
+- 修复学习触发条件使用 `total_messages`（累计总数）而非 `unprocessed_messages`（未处理数），导致活跃群组阈值检查形同虚设的问题
+
+#### 插件卸载时阻塞
+- 修复 `V2LearningIntegration.stop()` 中 buffer flush 无超时保护，LLM API 无响应时无限阻塞关停流程的问题。每个群的 flush 现在受 `task_cancel_timeout` 限制，超时后丢弃缓冲区继续关停
+- 修复 `DatabaseEngine.close()` 中 `engine.dispose()` 无超时保护，MySQL 连接池在有未完成查询时可能无限等待的问题。每个引擎 dispose 现在带 5 秒超时
+
+#### Mem0 记忆引擎 API 调用失败
+- 修复 Mem0 通过提取 API 凭证重建 LLM / Embedding 客户端的方式，当凭证提取失败或模型名不可用时报 `api_key client option must be set` 或 `Model does not exist` 错误
+- LLM 和 Embedding 均改为直接桥接框架 Provider：自定义 `LLMBase` / `EmbeddingBase` 子类通过 `asyncio.run_coroutine_threadsafe()` 调用框架的 `text_chat()` / `get_embedding()` 方法，无需提取任何 API 凭证
+- 移除 `_extract_llm_credentials()` 和 `_extract_embedding_credentials()` 方法
+
+#### MySQL 连接 Packet sequence number wrong
+- 修复 `DatabaseEngine` 的 MySQL 引擎使用 `NullPool`（无连接池），高并发下连接状态混乱导致 `Packet sequence number wrong` 错误
+- 改为 SQLAlchemy 默认 `QueuePool`（pool_size=5, max_overflow=10），启用 `pool_pre_ping=True` 自动检测失效连接，`pool_recycle=3600` 防止 MySQL 超时断开
+
+#### 黑话并发插入 IntegrityError
+- 修复 `jargon_miner` 中 TOCTOU 竞态：`get_jargon()` 与 `insert_jargon()` 之间无原子保护，并发任务同时插入相同 `chat_id + content` 触发唯一约束冲突
+- `JargonFacade.insert_jargon()` 新增 `IntegrityError` 捕获，冲突时回退查询已有记录并返回其 ID
+
+### 性能优化
+
+#### LightRAG 首次查询冷启动优化
+- 新增 `LightRAGKnowledgeManager.warmup_instances()` 方法，在插件启动后异步预创建活跃群组的 LightRAG 实例（storage 初始化 + pipeline 初始化），消除首次用户查询时的冷启动延迟，首次查询延迟降低约 80%
+- `V2LearningIntegration` 新增 `warmup()` 方法，由 `PluginLifecycle.on_load()` 在后台调用
+- 自动学习启动的群组间等待缩短约 80%，减少启动阶段日志中的间隔
+
+## [Next-2.0.3] - 2026-02-24
+
+### 性能优化
+
+#### V2 上下文检索延迟优化（LLM Hook 响应加速）
+- 新增查询结果级 TTL 缓存（基于 CacheManager），`get_enhanced_context` 缓存命中时延迟降低约 40%
+- LightRAG 默认查询模式从 `hybrid` 调整为 `local`，省去全局社区聚合步骤，单次查询延迟降低约 35-40%
+- ExemplarLibrary 查询 embedding 结果缓存至 CacheManager，避免相同 query 重复调用 embedding API
+- Rerank 改为条件执行：候选文档数低于 `rerank_min_candidates`（默认 3）时跳过，减少不必要的 API 调用
+
+#### 消息摄入架构重构（process_message 加速）
+- 将 LightRAG 知识图谱摄入和 Mem0 记忆摄入从 Tier 1（每条消息执行）降级为 Tier 2（批量执行）
+- Tier 1 延迟降低约 47%，仅执行轻量缓冲操作，重量级 LLM 操作在 Tier 2 批量触发
+- 批量策略：每 5 条消息或 60 秒触发一次 flush，知识和记忆引擎并发处理
+- 短消息过滤：长度低于 15 字符的消息跳过 LLM 摄入，减少无效 API 调用
+- 关停时自动 flush 残余缓冲，防止数据丢失
+
+#### CacheManager 扩展
+- 新增 `context` TTL 缓存（128 条目, 5 分钟），用于 V2 上下文检索结果
+- 新增 `embedding_query` TTL 缓存（256 条目, 10 分钟），用于查询 embedding 向量
+
+### 新增配置项
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `lightrag_query_mode` | `local` | LightRAG 检索模式（local/hybrid/naive/global/mix） |
+| `rerank_min_candidates` | `3` | 触发 Reranker 的最低候选文档数 |
+
+## [Next-2.0.2] - 2026-02-24
+
+### Bug 修复
+
+#### MySQL 方言兼容
+- 修复 SQLAlchemy 列类型定义在 MySQL 方言下的兼容性问题
+
+#### 监控模块可选依赖
+- `prometheus_client` 导入失败时优雅降级，不再阻断插件启动
+
+#### Windows 控制台兼容
+- 新增 GBK 安全字符串转换辅助函数，防止 Windows 中文控制台输出含 emoji/特殊字符时崩溃
+
+### 重构
+
+#### 关停超时集中管理
+- 将 `shutdown_step_timeout`、`task_cancel_timeout`、`service_stop_timeout` 三个超时参数集中到 `PluginConfig`
+
+### CI/CD
+
+- Issue triage workflow 重写为双段式报告格式
+
+## [Next-2.0.1] - 2026-02-23
+
+### 🔧 Bug 修复
+
+#### 插件卸载/重载卡死 (100% CPU)
+- 修复 5 个后台 `while True` 任务（`_daily_mood_updater`、`_periodic_memory_sync`、`_periodic_context_cleanup`、`_periodic_knowledge_update`、`_periodic_recommendation_refresh`）未被跟踪和取消的问题
+- `plugin_lifecycle.py` 中 3 个 `asyncio.create_task()` 调用现在全部注册到 `background_tasks` 集合，确保关停时被取消
+- 所有关停步骤添加 `asyncio.wait_for` 超时保护（每步 8s），避免单个服务阻塞整个关停流程
+- `ServiceRegistry.stop_all_services()` 每个服务添加 5s 超时
+- `GroupLearningOrchestrator.cancel_all()` 添加 per-task 超时
+- `Server.stop()` 将 `thread.join()` 移至线程池执行器，避免阻塞事件循环
+- `WebUIManager.stop()` 添加锁获取超时，防止死锁
+- 关停时清理 `SingletonABCMeta._instances`，防止重载后单例残留
+
+#### MySQL 兼容性修复
+- 修复 `persona_content` 列 INSERT 时传入 `None` 导致 `IntegrityError (1048)` 的问题
+- 修复 `TEXT` 列不能有 `DEFAULT` 值的 MySQL 严格模式错误
+- 启用启动时自动列迁移，跳过 TEXT/BLOB/JSON 列的 DEFAULT 生成
+- Facade 文件中 65 处方法内延迟导入移至模块级别，修复热重载后 `ModuleNotFoundError`
+
+#### 人格审批修复
+- 传统审批路径（纯数字 ID）改为通过 `PersonaWebManager` 路由，解决跨线程调用导致的卡死
+- 修复 `save_or_update_jargon` 参数顺序和类型错误
+
+## [Next-2.0.0] - 2026-02-22
+
+### 🎯 新功能
+
+#### Prometheus 性能监控模块
+- 新增 `services/monitoring/` 子包，提供统一性能监控基础设施
+- **指标收集** (`metrics.py`)：基于 `prometheus_client` 的 14 个预定义指标（LLM 延迟/调用/错误、消息处理、缓存命中、系统 CPU/内存、Hook 耗时等）
+- **异步装饰器** (`instrumentation.py`)：`@timed`、`@count_errors`、`timer` 上下文管理器，兼容 `prometheus-async`，缺失时自动回退纯 Python 实现
+- **函数级监控** (`instrumentation.py`)：`@monitored` 装饰器记录每函数调用次数、错误数、延迟直方图，通过 `debug_mode` 开关控制，关闭时零开销
+- **指标采集器** (`collector.py`)：后台周期采集系统资源（CPU/内存）和缓存命中率，写入 Prometheus 注册表
+- **健康检查** (`health_checker.py`)：5 项子系统健康检查（CPU/内存/LLM/缓存/服务注册表），返回 healthy/degraded/unhealthy 状态
+- **性能分析** (`profiler.py`)：按需 CPU 分析（yappi/cProfile）和内存分析（tracemalloc），支持启动/停止会话式操作
+- **REST API** (`webui/blueprints/monitoring.py`)：6 个端点 — `/metrics`（Prometheus 文本格式）、`/metrics/json`、`/health`、`/functions`（函数级指标）、`/profile/start`、`/profile/<id>`
+- 新增 `prometheus_client` 和 `prometheus-async` 依赖
+- `ServiceFactory` 注册 `MetricCollector` 和 `HealthChecker`，`ServiceContainer` 自动初始化
+
+#### 性能监控 WebUI 应用
+- 新增 macOS 风格「性能监控」应用，包含 3 个 Tab 页
+- **系统概览**：5 个健康状态卡片（CPU/内存/LLM/缓存/服务）+ 2 个 ECharts 仪表盘图表
+- **函数性能**（默认 Tab）：`el-table` 可排序表格，**默认按平均耗时降序排列**，实时展示最慢函数；支持搜索过滤、错误率颜色标签
+- **性能分析**：CPU/内存分析启停控制，结果以表格展示 top 函数/分配热点
+- 每 10 秒自动刷新数据
+- `debug_mode` 关闭时函数性能 Tab 显示引导提示
+
+#### 数据库自动列迁移
+- 新增启动时自动检测并添加缺失列的机制
+- ORM 模型新增列后无需手动迁移，`create_all` + `inspect` 自动补全
+- 为 `PersonaBackup` 添加 `group_id`、`persona_content`、`backup_time` 列
+
+### ⚡ 性能优化
+
+#### 数据库引擎
+- SQLite 连接池从 `NullPool` 切换为 `StaticPool`，复用单连接消除逐查询开销
+- 启用 `mmap_size=256MB` 加速读取
+
+#### 缓存系统
+- `CacheManager.general_cache` 从无界 `dict` 改为 `LRUCache(maxsize=5000)`，防止内存无限增长
+- 新增逐缓存命中/未命中计数和 `get_hit_rates()` API，供监控仪表盘消费
+- `MultidimensionalAnalyzer` 分析缓存从无界 `dict` 改为 `TTLCache`（情感 15min、风格 30min）
+- 新增社交关系 O(1) 索引（`(from_user, to_user, relation_type)` 元组键）
+
+#### 社交上下文注入
+- 5 个独立上下文查询改为 `asyncio.gather` 并发执行，总延迟降低
+- 缓存 TTL 从 60 秒提升至 300 秒，匹配社交数据低频变更特性
+- 新增 `invalidate_user_cache()` 主动失效机制
+
+#### LLM 适配器
+- Provider 延迟初始化从一次性尝试改为 30 秒冷却间隔重试，应对启动时 Provider 未就绪场景
+
+#### 响应多样性
+- 新增 5 秒去重缓存，同一群组短时间窗口内的重复调用直接返回缓存结果
+
+#### 学习流程
+- 表达模式保存从逐条 `session.add()` + `commit` 改为 `add_all()` 批量写入
+- `_execute_learning_batch` 和 `reinforcement_memory_replay` 用显式 `from_force_learning` / `from_learning_batch` 参数替代 `inspect.currentframe()` 栈帧遍历
+
+#### 模块生命周期
+- `V2LearningIntegration` 的 `start()`/`stop()` 从串行 await 改为 `asyncio.gather` 并发
+- `LightRAGKnowledgeManager` 新增统计结果缓存（TTL 5min），避免重复 GraphML 解析
+
+### 🔧 Bug 修复
+
+#### ORM 迁移后遗留修复
+- `ExpressionPattern` Facade 查询列名修正
+- `SocialContextInjector` 适配新 Facade 返回格式
+- `SocialFacade` 的 `from_user`/`to_user` 映射到 ORM 列名
+- 社交用户统计查询补充 `sender_name` 字段
+- `CompositePsychologicalState` 模型补充缺失列
+- `get_recent_week_expression_patterns` 补充 `hours` 参数
+- `DatabaseManager` 别名兼容旧代码
+- 学习会话记录改为 upsert 避免重复插入
+- `MemoryGraphManager` 处理 dict 类型消息
+
+#### 业务逻辑修复
+- `LightRAGKnowledgeManager`：embedding 结果转换为 numpy array，避免类型错误
+- `LightRAGKnowledgeManager`：缺失 embedding provider 时添加守护检查
+- 黑话学习：`generate_response` 替代不存在的 `generate` 方法
+- 黑话挖掘：增强过滤条件提升挖掘质量
+- 社交关系：插入前先 get-or-create `UserSocialProfile`，避免外键约束失败
+- 人格备份：`auto_backup_enabled` 作为唯一备份开关
+- 插件初始化：bootstrap 异常不再阻断 handler 绑定
+- 状态迭代：组件列表用 `list()` 迭代替代 dict 迭代
+
+### 🔇 日志优化
+- LLM Hook 注入流程的 10 处 `logger.info` 降级为 `logger.debug`，减少正常运行时的日志噪音
+
+### 🗑️ 移除
+- 删除未使用的 `DataAnalyticsService`
+- 移除 `plotly`、`matplotlib`、`seaborn`、`wordcloud` 及 3 个未使用依赖
+
+---
+
+## [Next-2.0.0] - 2026-02-21
+
+### 🏗️ 架构重构
+
+#### 全量 ORM 迁移（消除所有硬编码 SQL）
+- 将 7 个服务文件中残留的硬编码 raw SQL 全部迁移至 SQLAlchemy ORM
+- `expression_pattern_learner`：`_apply_time_decay`、`_limit_max_expressions`、`get_expression_patterns` 改用 `ExpressionPatternORM` 模型
+- `time_decay_manager`：完全重写，消除 f-string SQL 注入风险，用显式 ORM 模型处理器替代动态表名拼接，移除对不存在表的引用
+- `enhanced_social_relation_manager`：4 个方法改用 `UserSocialProfile`、`UserSocialRelationComponent`、`SocialRelationHistory` 模型
+- `intelligent_responder`：3 个方法改用 `FilteredMessage`、`RawMessage` 模型及 `func.count`/`func.avg` 聚合
+- `multidimensional_analyzer`：2 个 GROUP BY/HAVING 查询改用 ORM `select().group_by().having()`
+- `affection_manager`：3 层级联查询改用 `RawMessage`、`FilteredMessage`、`LearningBatch` 模型
+- `dialog_analyzer`：`get_pending_style_reviews` 改用 `StyleLearningReview` 模型
+- `progressive_learning`、`message_facade`、`webui/learning` 蓝图同步迁移
+
+#### 遗留数据库层清理（-7600 行）
+- 删除 `services/database/database_manager.py`（6035 行硬编码 SQL 单体）
+- 删除 `core/database/` 下 5 个遗留后端文件：`backend_interface.py`、`sqlite_backend.py`、`mysql_backend.py`、`postgresql_backend.py`、`factory.py`（共 1530 行）
+- DomainRouter 移除 `_legacy_db` 回退、`get_db_connection()`/`get_connection()` shim、`__getattr__` 安全网
+- `core/database/__init__.py` 精简为仅导出 `DatabaseEngine`
+- `services/database/__init__.py` 移除 `DatabaseManager` 导出
+
+#### 未使用资源清理
+- 删除 `web_res/static/MacOS-Web-UI/` 源码目录（已迁移至 `static/js/macos/` 和 `static/css/macos/`）
+
+#### 服务层重组
+- 将 `services/` 下 51 个平铺文件重组为 14 个领域子包，提升内聚性和可维护性
+- 每个子包职责明确：`learning/`、`social/`、`jargon/`、`persona/`、`expression/`、`affection/`、`psychological/`、`reinforcement/`、`message/` 等
+
+#### 主模块瘦身
+- 将 `main.py` 业务逻辑提取至独立生命周期模块（`initializer`、`event_handler`、`learning_scheduler` 等）
+- 代码量从 2518 行精简至 207 行（减少 92%）
+
+#### 数据库单体拆分
+- 将 4308 行的 `SQLAlchemyDatabaseManager` 重写为约 800 行的薄路由层（DomainRouter）
+- 引入 `BaseFacade` 基类和 11 个领域 Facade，实现关注点分离
+- 所有 62 个消费者方法显式路由到对应 Facade，消除隐式回退
+
+#### 领域 Facade 清单
+| Facade | 职责 | 方法数 |
+|--------|------|--------|
+| `MessageFacade` | 消息存储、查询、统计 | 17 |
+| `LearningFacade` | 学习记录、审查、批次、风格学习 | 29 |
+| `JargonFacade` | 黑话 CRUD、搜索、统计、全局同步 | 14 |
+| `SocialFacade` | 社交关系、用户画像、偏好 | 9 |
+| `PersonaFacade` | 人格备份、恢复、更新历史 | 4 |
+| `AffectionFacade` | 好感度、Bot 情绪状态 | 6 |
+| `PsychologicalFacade` | 情绪画像 | 2 |
+| `ExpressionFacade` | 表达模式、风格画像 | 8 |
+| `ReinforcementFacade` | 强化学习、人格融合、策略优化 | 6 |
+| `MetricsFacade` | 跨域统计聚合 | 3 |
+| `AdminFacade` | 数据清理与导出 | 2 |
+
+#### Repository 层扩展
+- 新增 10 个类型化 Repository 类，总数从 29 增至 39
+- 新增：`RawMessageRepository`、`FilteredMessageRepository`、`BotMessageRepository`、`UserProfileRepository`、`UserPreferencesRepository`、`EmotionProfileRepository`、`StyleProfileRepository`、`BotMoodRepository`、`PersonaBackupRepository`、`KnowledgeGraphRepository`
+
+### 🔧 重构
+
+#### PluginConfig 迁移
+- 从 `dataclass` 迁移至 pydantic `BaseModel`
+- 采用 `ConfigDict(extra="ignore", populate_by_name=True)` 实现健壮验证和未知字段容忍
+
+#### 服务缓存优化
+- 新增 `@cached_service` 装饰器，消除冗余服务实例化
+- 替换手工单例模式，减少样板代码
+
+#### 数据库连接清理
+- 移除旧版 `DatabaseConnectionPool`，改用 SQLAlchemy 异步引擎内置连接池管理
+- 移除未使用的 `EventBus`、`EventType`、`EventManager` 等事件基础设施
+
+### ⚡ 性能优化
+
+#### LLM 缓存命中率提升
+- 上下文注入从 `system_prompt` 拼接改为 AstrBot 框架 `extra_user_content_parts` API
+- 动态上下文（社交关系、黑话、多样性、V2 学习）作为额外内容块附加在用户消息之后，不再修改系统提示词
+- **system_prompt 保持稳定不变**，最大化 LLM API 前缀缓存（prefix caching）命中率，显著降低 token 消耗和响应延迟
+- 旧版 AstrBot 自动回退到 system_prompt 注入（附带缓存命中率下降警告）
+
+#### 上下文检索并行化
+- LLM Hook 的 4 个上下文提供者（社交、V2 学习、多样性、黑话）通过 `asyncio.gather` 并行执行
+- Hook 总延迟降低约 60-70%（从串行累加改为取最慢单项）
+- 每个提供者独立计时，便于识别性能瓶颈
+
+#### 服务实例化缓存
+- 29 个服务方法通过 `@cached_service` 装饰器缓存，避免重复创建服务实例
+- `ServiceFactory` 和 `ComponentFactory` 共享同一缓存字典，跨工厂复用
+
+#### 数据处理流水线优化
+- 消息批量写入改为 `asyncio.gather` 并发插入
+- 渐进式学习中消息筛选与人格检索并行执行
+- 强化学习与风格分析并行执行
+- DomainRouter 显式方法路由消除 `__getattr__` 运行时属性查找开销
+
+### 📊 统计
+- **净代码减少**：约 21,700 行（ORM 迁移 + 遗留层删除 + 未使用资源清理）
+- **遗留 SQL 层**：6035 + 1530 = 7565 行硬编码 SQL 代码删除
+- **ORM 迁移**：7 个服务文件、约 800 行 raw SQL 替换为类型安全的 ORM 查询
+- **安全修复**：`time_decay_manager` f-string SQL 注入漏洞已消除
+- **新增文件**：11 个 Facade + 10 个 Repository + 1 个 BaseFacade = 22 个文件
+- **`SQLAlchemyDatabaseManager`**：4308 行 → ~777 行（减少 82%），零遗留回退
+- **变更文件**：51+ 个服务文件重组、`main.py` 重构、数据库层完全重写
+
+---
+
+## [Next-1.2.9] - 2026-02-19
+
+### 🔧 Bug 修复
+
+#### 多配置文件人格加载失败
+- `PersonaManagerService` 调用 `get_default_persona_v3()` 未传入 `umo` 参数，导致始终返回 default 配置的人格
+- 新增 `_resolve_umo()` 方法和 `group_id_to_unified_origin` 映射，正确解析当前活跃配置
+- `main.py` 将映射表引用传递给 `PersonaManagerService`
+- `compatibility_extensions.py` 透传 `group_id` 参数
+
+#### WebUI 人格不随配置切换更新
+- `PersonaWebManager.get_default_persona_for_web()` 硬编码 `get_default_persona_v3()` 无 UMO，切换配置后仍显示旧人格
+- 改为从 `group_id_to_unified_origin` 映射中获取 UMO，加载当前活跃配置的人格
+- 同步修复 `dependencies.py` 和 `webui_legacy.py` 的映射注入
+
+#### PersonaWebManager 跨线程 DB 访问
+- WebUI 运行在守护线程（独立事件循环），直接调用框架 PersonaManager 的异步 DB 方法会失败
+- 新增 `_run_on_main_loop()` 将协程调度到主事件循环执行
+- 缓存优先从 PersonaManager 内存列表同步（无需跨线程 DB 调用）
+
+#### WebUI 人格详情查询错误
+- `PersonaService` 使用了插件的 `PersonaManagerService` 而非框架的 `PersonaManager`，导致 `get_persona` 方法不存在
+- 改为使用 `container.astrbot_persona_manager`
+
+#### 框架移除 `curr_personality` 属性
+- AstrBot 框架已完全移除 `provider.curr_personality`，5 个文件共约 40 处引用报 `AttributeError`
+- 全部改为通过 `context.persona_manager` API 访问人格
+
+#### `session_updates` 初始化不可达
+- `TemporaryPersonaUpdater.session_updates` 初始化代码位于 `return` 语句之后，永远不会执行
+- 移至 `__init__` 方法
+
+### 📝 其他
+
+- `memory_graph_manager` 和 `knowledge_graph_manager` 的 `db_manager` 空值检查日志从 WARNING 降级为 DEBUG
+- 版本号更新至 Next-1.2.9
+
+---
+
+## [Next-1.2.8] - 2026-02-19
+
+### 🔧 Bug 修复
+
+#### WebUI 服务器端口占用
+- 将 WebUI 服务器从 `asyncio.create_task` 改为独立守护线程模式运行 Hypercorn
+- 采用旧版经过验证的线程方案，确保 Windows/macOS/CentOS/Ubuntu 等系统上重启时端口可靠释放
+- 使用 `SecureConfig` 创建带 `SO_REUSEADDR` + `SO_REUSEPORT` + `set_inheritable(False)` 的 socket
+- 保留跨平台端口清理（Windows `taskkill` / Linux `lsof` + `kill -9`）
+
+#### 单例重启问题
+- 插件 `terminate()` 时重置 `MemoryGraphManager` 单例状态，防止重启后使用失效的 LLM 适配器
+- `Server.stop()` 重置单例状态，确保重新初始化
+
+#### WebUI 学习按钮异常
+- 修复 `trigger_learning` 方法不存在的错误，改为正确的 `start_learning` 方法
+
+#### MemoryGraphManager 空指针
+- 为 `llm_adapter` 增加二次空值检查，防止并发场景下 `generate_response` 调用失败
+
+### 📝 其他
+
+- README（中英文）重写为卖点导向，突出功能价值，移除技术实现细节
+- `persona_web_manager` 常规日志从 INFO 降级为 DEBUG，减少日志噪音
+- 版本号更新至 Next-1.2.8
+
+---
+
+## [Next-1.2.5] - 2026-02-19
+
+### 🎯 新功能
+
+#### MacOS-Web-UI 桌面框架迁移
+- 前端从 ModderUI 整体重写为 macOS 风格桌面模拟器
+- 每个管理页面变为独立 macOS「应用窗口」，支持拖拽、缩放、最小化、最大化、层叠
+- 基于 Vue 3 + Element Plus + Vuex 4 自托管加载（无 Node.js 构建步骤）
+- 9 个业务应用：仪表盘、系统设置、学习状态、人格审查、人格管理、对话风格、社交关系、黑话学习、Bug反馈
+- macOS 风格 Dock 栏、启动台、菜单栏、启动动画、登录界面
+
+#### 状态栏实时指标
+- 菜单栏实时显示消息总数和学习效率
+- 每 30 秒自动刷新
+
+#### 人格审查服务端分页
+- 后端接受 `limit`/`offset` 参数，返回分页数据和 `total` 总数
+- 前端仅加载当前页数据，翻页时按需加载
+- 消除一次性加载全部记录的性能问题
+
+#### 多配置人格支持
+- 支持多份人格配置并行管理，可选自动应用
+- 审批流程和批量审查接口中集成自动应用逻辑
+
+### 🔧 Bug 修复
+
+#### 前端运行时错误
+- 修复 `styleProgress.map is not a function`：SQLAlchemy `get_style_progress_data()` 错误返回 Dict 而非 List，重写为通过 ORM 查询 `learning_batches` 表
+- 修复 `id.substring is not a function`：`shortId()`、`escapeHtml()`、`truncateText()`、`getContentPreview()`、`getProposedPreviewHtml()` 统一增加 `String()` 类型转换
+- 修复 `SocialRelationAnalyzer.analyze_group_relations` 方法名错误，改为 `analyze_group_social_relations`
+- 修复 `get_jargon_statistics()` 传入无效 `chat_id` 参数
+- 在 StyleLearning.js 和 Dashboard.js 中增加 `Array.isArray()` 防御检查
+
+#### 后端与数据库
+- 解决跨线程数据库访问时的 asyncio 事件循环冲突
+- 处理 MySQL Boolean 列类型和默认值兼容问题
+- 将 `kg_relations` VARCHAR 缩短至 191 以适配 MySQL utf8mb4 索引限制
+- WebUI 数据库方法委托到 ORM 版本
+- 修复知识图谱、记忆图谱、WebUI 服务器初始化错误
+- 所有入口路由统一指向 `macos.html`
+
+#### WebUI 界面修复
+- 修复登录卡片大小和布局溢出
+- 修复人格审查、风格学习、社交关系数据获取
+- 修复深色模式切换、壁纸上传、Bug反馈图标
+- 全局替换 Apple 图标为项目 Logo
+- 跳过启动动画直接进入登录页
+- Dock 添加计算器、修复启动台图标
+
+### 📱 移动端适配
+- Dock 图标增大（768px 下 40px，480px 下 36px）
+- 关闭/最小化/最大化按钮增大（768px 下 18px，480px 下 16px）
+- 菜单栏和标题栏高度增加，改善触控体验
+- 桌面和启动台改为单击打开应用（原为双击）
+
+### 🔧 重构
+- WebUI 中全部 legacy raw SQL 替换为 ORM 查询
+- 新增强化学习和 ML 分析器的 ORM 方法
+- 实现基于 ORM 的黑话 CRUD 方法
+- Repository 层 dict/list 自动 JSON 序列化
+- WebUI 蓝图拆分为模块化包（原为单体 webui.py）
+- ModderUI CSS 框架（iOS 液态玻璃主题，迁移过渡阶段）
+
+### 📝 其他
+- 版本号更新至 Next-1.2.5
+- 移除废弃的注册装饰器（@SXP-Simon）
+- CI 提交信息长度限制提升至 128 字符
+
+---
+
+## [Next-1.2.0] - 2026-02-18
+
+### 🔥 关键修复
+
+#### WebUI 跨线程数据库访问崩溃 (Critical)
+- **根因**：WebUI 运行在独立线程的独立事件循环中，调用 legacy `get_db_connection()` 时触发 `RuntimeError: Task got Future attached to a different loop`
+- **修复**：为 `DatabaseEngine` 实现按事件循环隔离的引擎池，非主线程自动创建独立 SQLAlchemy 引擎（NullPool），WebUI 的所有数据库操作改用 ORM
+
+#### 强化学习保存 TypeError (Critical)
+- **根因**：ORM Repository 层将 dict/list 直接赋给 Text 列，触发 `TypeError: dict can not be used as parameter`
+- **修复**：在 `ReinforcementLearningRepository`、`PersonaFusionRepository`、`StrategyOptimizationRepository` 中添加 `json.dumps()` 序列化
+
+#### 黑话学习无法保存数据
+- **根因**：`insert_jargon`/`update_jargon`/`get_jargon` 未在 `SQLAlchemyDatabaseManager` 中实现，通过 `__getattr__` 委托给 legacy 代码，datetime 对象与 BigInteger 列类型不兼容导致静默失败
+- **修复**：在 `SQLAlchemyDatabaseManager` 中实现 ORM 版本的三个黑话 CRUD 方法，自动处理时间戳类型转换
+
+### 🔧 重构
+
+#### WebUI 全面 ORM 迁移
+- 替换 `webui.py` 中全部 10 处 `get_db_connection()` 原始 SQL 为 ORM 查询
+- 涉及路由：`relearn_all`、`get_groups_info`、`analyze_all_groups`、`style_learning_all`、`expression_patterns`、`clear_group_social_relations`、`toggle_jargon_global` 等
+
+#### ML 分析器 ORM 迁移
+- 替换 `ml_analyzer.py` 中 3 处 `get_db_connection()` 为 ORM 查询
+- `_get_user_messages`、`_get_recent_group_messages`、`_get_most_active_users` 改用 `RawMessage` ORM 模型
+
+#### 强化学习方法 ORM 实现
+- 在 `SQLAlchemyDatabaseManager` 新增 10 个 ORM 方法，拦截原本会委托给 legacy 的调用
+- 包括：`get_learning_history_for_reinforcement`、`save_reinforcement_learning_result`、`get_persona_fusion_history`、`save_persona_fusion_result`、`get_learning_performance_history`、`save_learning_performance_record`、`save_strategy_optimization_result`、`get_messages_for_replay`、`get_message_statistics`
+
+### 📝 其他
+- 新增 `CONTRIBUTING.md`，规范 Conventional Commits 提交格式
+- 新增 PR 提交信息 lint CI
+- 登录界面适配移动端（@Radiant303）
+- 精简 metadata.yaml 描述
+- 更新版本号至 Next-1.2.0
+
+### 📊 统计
+- **变更文件**：main.py、webui.py、ml_analyzer.py、sqlalchemy_database_manager.py、reinforcement_repository.py、engine.py
+- **新增约 500 行 ORM 代码**，替代 legacy raw SQL 调用
+
+---
+
+## [Next-1.1.9] - 2026-02-17
+
+### 🔥 关键修复
+
+#### SQLite 模式完全不可用 (Critical)
+- **根因**：`_check_and_migrate_database()` 在首次启动时对不存在的数据库执行迁移，导致 `on_load()` 崩溃，`db_manager.start()` 永远不会执行
+- **表现**：所有数据库操作报错 `数据库管理器未启动，engine不存在`
+- **修复**：彻底移除数据库迁移系统，表结构由 SQLAlchemy ORM `Base.metadata.create_all` 幂等创建
+
+#### 群聊限制不生效 (#28)
+- **根因**：`_get_active_groups()` 查询所有群组时未应用 `target_qq_list` 白名单和 `target_blacklist` 黑名单
+- **修复**：为 `QQFilter` 新增 `get_allowed_group_ids()` / `get_blocked_group_ids()` 方法，在三级渐进查询（24h → 7d → 全量）中统一应用 `.in_()` / `.notin_()` 过滤
+
+#### 命令报错 (#24)
+- **根因**：`/persona_info` 等命令引用了不存在的方法 `PersonaUpdater.format_current_persona_display`
+- **修复**：移除 11 个已废弃命令，保留 6 个核心命令
+
+#### 启动竞态条件
+- 为 `on_message()` 添加数据库就绪检查，在 `on_load()` 完成前跳过消息处理，防止 "engine不存在" 错误
+
+#### LLM 空响应崩溃
+- `prompt_sanitizer.sanitize_response()` 在 LLM 返回 `None` 时触发 `TypeError`，已添加空值保护
+
+### 🗑️ 移除
+
+#### 数据库迁移系统 (完整移除)
+- 删除 `utils/migration_tool.py`（v1 迁移工具）
+- 删除 `utils/migration_tool_v2.py`（SmartDatabaseMigrator）
+- 删除 `test_migration_quick.py`（迁移测试）
+- 移除 `engine.py` 中的 `migrate_schema()`、`_migrate_mysql()`、`_migrate_sqlite()`
+- 移除 `sqlite_backend.py`、`mysql_backend.py` 中的迁移调用
+- 移除 `main.py` 中的 `_check_and_migrate_database()`、`_get_database_url()`、`_mask_url()`
+
+#### 废弃命令 (11 个)
+- `clear_data`、`export_data`、`analytics_report`
+- `persona_switch`、`persona_info`、`temp_persona`
+- `apply_persona_updates`、`switch_persona_update_mode`
+- `clean_duplicate_content`、`migrate_database`、`db_status`
+
+### ✅ 保留命令 (6 个)
+- `learning_status`、`start_learning`、`stop_learning`
+- `force_learning`、`affection_status`、`set_mood`
+
+### 📝 其他
+- 更新 README 标题和版本徽章至 Next-1.1.9
+- 更新 `.gitignore` 排除导出目录
+
+### 🤝 致谢
+- 感谢 @NieiR 和 @sdfsfsk 在早期版本中的社区贡献
+
+### 📊 统计
+- **净减少约 2600 行代码**，删除 3 个文件
+- **变更文件**：main.py、engine.py、factory.py、sqlite_backend.py、mysql_backend.py、prompt_sanitizer.py
+
+---
+
+## [Next-1.1.5] - 2026-01-17
+
+### 🎯 新功能
+
+#### 目标驱动对话系统
+- **38种预设对话目标类型**，涵盖情感支持、知识问答、日常对话等8大类场景
+- **智能目标识别与切换**，自动分析用户意图并调整对话策略
+- **动态阶段规划**，根据对话进展自动调整互动流程
+- **会话隔离机制**，基于 `MD5(group_id + user_id + date)` 实现24小时独立会话
+- **RESTful API接口**，提供对话目标管理的编程接口
+
+详细说明：
+- 预设对话目标类型包括：情感支持（安慰、共情、鼓励等）、知识交流（答疑、科普、推荐等）、日常互动（闲聊、玩笑、吐槽等）
+  更多类型交由LLM自主创建
+- 拆解对话目标为阶段性目标，引导聊天对话朝目标靠近
+- 自动检测对话主题变化和阶段完成信号，智能切换目标
+- 集成到主消息流程，通过社交上下文注入器自动增强对话上下文
+
+#### Guardrails-AI 集成
+- **Pydantic模型验证**，为 LLM 输出提供类型安全保障
+- **GoalAnalysisResult 模型**，验证对话目标分析结果（目标类型、话题、置信度）
+- **ConversationIntentAnalysis 模型**，验证对话意图分析（目标切换、阶段完成、用户参与度等9个字段）
+- **自动类型转换**，兼容 guardrails-ai 返回的多种数据类型（dict/Pydantic实例）
+- **增强错误诊断**，详细的验证失败日志和响应预览
+
+### 🔧 重要修复
+
+#### LLM适配器延迟初始化
+- **非阻塞式加载**：插件加载时 Provider 未就绪不再抛出异常
+- **延迟初始化机制**：首次 LLM 调用时自动尝试初始化 Provider
+- **优雅降级**：Provider 配置失败时只记录 WARNING，不影响插件其他功能
+- 修复了 "创建框架LLM适配器失败：无法配置任何LLM提供商" 错误
+
+#### 字符串索引越界修复
+- 修复 `prompt_sanitizer.py` 中 LCS 算法的索引错误
+- 添加空字符串检查和实际长度重新计算
+- 解决了 `string index out of range` 崩溃问题
+
+#### Pydantic 类型错误修复
+- 修复 `'dict' object has no attribute 'goal_type'` 错误
+- 在 `parse_json_direct`、`parse_goal_analysis`、`parse_intent_analysis` 中添加类型检查
+- 自动将 dict 转换为 Pydantic 模型实例
+
+#### 参数传递修复
+- 修复 `goal_manager` 未传递到 `SocialContextInjector` 的问题
+- 确保对话目标上下文能正确注入到 LLM 请求中
+
+### 📝 文档更新
+
+- **README.md 完整重构**（+175行）
+  - 添加目标驱动对话系统详细说明
+  - 38种对话目标类型列表和示例
+  - 工作流程图和API端点文档
+  - 配置项说明（Goal_Driven_Chat_Settings）
+- **GitHub 项目描述优化**，突出目标驱动、俚语理解、社交关系管理等核心功能
+
+### 🐛 Bug修复与优化
+
+- **异常处理增强**：为对话目标管理器的3个 LLM 调用方法添加独立 try-except 块
+- **日志优化**：关键步骤从 DEBUG 提升到 INFO 级别，添加对话目标上下文注入验证日志
+- **JSON 解析改进**：添加空响应检查、响应长度记录、失败时显示前200字符预览
+- **配置加载修复**：正确加载 `Goal_Driven_Chat_Settings` 到 `PluginConfig`
+- **Guardrails 参数修复**：移除 `validate_and_clean_json()` 的错误 `fallback` 参数
+
+### 🔨 技术改进
+
+- **模型策略**：对话目标分析统一使用提炼（refine）模型，提升准确性
+- **类型安全**：全面采用 Pydantic 验证替代简单 JSON 清洗
+- **诊断能力**：添加目标驱动对话系统初始化诊断日志
+- **代码质量**：改进错误处理、日志记录、参数验证
+
+### 📊 统计
+
+- **18个提交**，涵盖新功能开发、Bug修复、文档更新
+- **核心文件变更**：
+  - 新增 `services/conversation_goal_manager.py`（对话目标管理器）
+  - 新增 `repositories/conversation_goal_repository.py`（数据访问层）
+  - 增强 `utils/guardrails_manager.py`（Pydantic模型集成）
+  - 优化 `core/factory.py`（延迟初始化）
+  - 优化 `core/framework_llm_adapter.py`（重试机制）
+
+---
+
+## [Previous Versions]
+
+更早版本的更新日志请参考 Git 历史记录。

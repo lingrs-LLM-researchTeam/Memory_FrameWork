@@ -1,0 +1,97 @@
+# Architecture
+
+LivingMemory is built from event hooks, memory processing, retrieval fusion, storage, and a Pages API. Automatic memory and active agent tools share the same core data model so they do not become two separate memory systems.
+
+<img class="diagram" src="/images/architecture-flow.svg" alt="LivingMemory runtime architecture">
+
+## Runtime flow
+
+1. AstrBot receives a message and `EventHandler` captures session context.
+2. Before the LLM request, the recall pipeline searches long-term memory using the current message and optional recent context.
+3. Retrieved memories are injected into the request or returned as agent tool results.
+4. After the LLM responds, the reflection pipeline decides whether to summarize and store new memory.
+5. Background tasks handle decay, cleanup, backup, and index validation.
+
+## Main modules
+
+| Module | Responsibility |
+| --- | --- |
+| `main.py` | Registers the plugin, initializes runtime components, registers agent tools and Pages API |
+| `core/plugin_initializer.py` | Non-blocking initialization, provider waiting, database migration, index loading |
+| `core/event_handler.py` | Group capture, memory recall, memory reflection |
+| `core/managers/memory_engine.py` | Unified write, search, delete, and index maintenance |
+| `core/managers/graph_memory_manager.py` | Coordinates graph nodes, edges, entries, and graph retrieval |
+| `core/managers/atom_lifecycle_manager.py` | Maintains atom expiration, forgetting, reinforcement, and lifecycle state |
+| `core/retrieval/` | BM25, vector, graph, atom retrieval, and RRF fusion |
+| `storage/` | SQLite storage, graph storage, atom storage, database migration |
+| `pages/dashboard/` | AstrBot Pages management UI |
+
+## Dual-route retrieval
+
+Document memories and graph memories are searched through two routes:
+
+| Route | Keyword mode | Vector mode |
+| --- | --- | --- |
+| Document route | `BM25Retriever` | `VectorRetriever` |
+| Graph route | `GraphKeywordRetriever` | `GraphVectorRetriever` |
+
+Each route fuses by normalized scores by default: BM25 and vector results are min-max normalized per query and combined with `fusion_bm25_weight` (`fusion_mode=score`; set it to `rrf` for the legacy rank fusion), and each route retrieves `k * recall_candidate_multiplier` candidates before fusion instead of re-ranking only `k`. Document and graph results are combined using normalized route weights. BM25 applies scope and status filters before limiting candidates. Vector retrieval expands candidates adaptively up to a limit of 8192.
+
+Routes have independent timeouts and failure handling. A dual-route request shares its query embedding when both stores use the same provider, and graph-only results load their source documents in a batch. With asynchronous persistence enabled, FAISS searches run in a worker thread and exclude index mutations.
+
+Atom retrieval participates in recall. Both fresh and cached results check current atom status and expiry: atom-backed memories inject only live facts, and fully expired parents are omitted. Full source documents remain available for inspection and export; embedding input limits never truncate stored documents.
+
+Graph node substring searches use FTS5 trigram indexing for tokens of three or more characters. Short tokens and SQLite builds without trigram support retain the original matching behavior. Triggers synchronize node edits and graph snapshot replacement.
+
+## Recall benchmark
+
+Run from the plugin directory using AstrBot's Python environment:
+
+```bash
+python scripts/benchmark_recall.py --sizes 1000 10000 --queries 30 --concurrency 4
+```
+
+The benchmark uses temporary SQLite/FAISS databases and deterministic local embeddings. It measures scoped document hybrid recall, P50/P95 latency, throughput, synthetic Recall@5, and event-loop lag without accessing production data or external providers. Synthetic recall is not a measure of real semantic quality. Use `--dimensions` and `--sessions` to vary the workload. The previous `tests/performance_test.py` entry point remains supported.
+
+## Background index maintenance
+
+Plugin readiness is separated from index maintenance. After core storage is initialized, startup consistency checks run as a background task. Even extensive repairs do not have to finish before the plugin becomes available.
+
+```mermaid
+flowchart LR
+    A[Background consistency check] --> B{Rebuild required?}
+    B -- No --> C[ready]
+    B -- Yes --> D[Build shadow generation]
+    D --> E[Final consistency check]
+    E --> F{Passed?}
+    F -- Yes --> G[Atomic cutover]
+    F -- No --> H[Keep live generation]
+```
+
+| Stage | Design |
+| --- | --- |
+| Change detection | Stores an embedding-provider fingerprint; a provider or model change triggers a full vector rebuild even when dimensions match |
+| Documents and vectors | Reads in batches with bounded embedding size, concurrency, retries, and delays; full vector rebuilds persist checkpoints |
+| BM25 and FAISS | Builds a shadow generation and switches only after failure-ratio requirements and consistency checks pass |
+| Graph | Streams active memories by primary key into shadow storage and replays writes made during the rebuild before cutover |
+| Final reconciliation | Checks consistency again and repairs concurrent changes made while maintenance was running |
+| Observability | Exposes state through `MemoryEngine`; `/lmem status` reports checking, rebuilding, partial, failed, or cancelled states and progress |
+
+## Memory data model
+
+| Type | Description |
+| --- | --- |
+| Session messages | Raw conversation context used for summarization triggers and expanded queries |
+| Memory entries | LLM-generated long-term memories with summaries, importance, session, and persona metadata |
+| Graph nodes and edges | Entities and relationships extracted from memories, with cross-memory merging |
+| Memory atoms | Independent fact units with type, TTL, decay, and access reinforcement |
+
+## Data safety
+
+| Scenario | Protection |
+| --- | --- |
+| Plugin version change | Startup creates a version-tagged backup |
+| Database migration | Backup before migration |
+| Index rebuild | Builds shadow generations in batches, keeps live data on failure, atomically switches on success, and reconciles concurrent writes |
+| Memory deletion | Transactional deletion of related records |
+| Dashboard operations | Pages API reuses MemoryEngine and GraphStore instead of bypassing backend safety logic |

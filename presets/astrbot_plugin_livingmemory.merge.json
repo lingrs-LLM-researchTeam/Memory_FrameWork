@@ -1,0 +1,38 @@
+{
+  "filtering_settings": {
+    "memory_scope_mode": "session",
+    "use_session_filtering": true,
+    "use_persona_filtering": true
+  },
+  "agent_tools": {
+    "max_total_evidence_bytes": 7000
+  },
+  "Integration_Settings": {
+    "require_memory_authority": true,
+    "delegate_memory_to_livingmemory": true,
+    "disable_local_memory_when_delegated": true
+  },
+  "Runtime_Internal_Settings": {
+    "enable_llm_hooks": true,
+    "llm_hook_injection_target": "extra_user_content_parts"
+  },
+  "Advanced_Settings": {
+    "auto_apply_approved_persona": false
+  },
+  "Persona_Evolution_Settings": {
+    "auto_apply_persona_updates": false,
+    "use_persona_manager_updates": false
+  },
+  "Storage_Settings": {
+    "data_dir": ""
+  },
+  "Database_Settings": {
+    "db_type": "sqlite"
+  },
+  "Self_Learning_Basic": {
+    "enable_web_interface": false
+  },
+  "framework_modules": {
+    "mode": "memory_and_learning"
+  }
+}

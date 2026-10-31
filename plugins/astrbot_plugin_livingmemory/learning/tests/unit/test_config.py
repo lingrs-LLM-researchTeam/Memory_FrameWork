@@ -1,0 +1,896 @@
+"""
+Unit tests for PluginConfig
+
+Tests the plugin configuration management including:
+- Default value initialization
+- Configuration creation from dict
+- Configuration validation
+- File persistence (save/load)
+- Boundary value verification
+"""
+import os
+import json
+import tempfile
+import pytest
+from unittest.mock import patch, MagicMock
+
+from config import (
+    DEFAULT_DATA_DIR,
+    DEFAULT_DB_TYPE,
+    PluginConfig,
+    get_config_cost_warnings,
+    is_lightrag_livingmemory_high_cost_config,
+    normalize_db_type,
+)
+
+
+@pytest.mark.unit
+@pytest.mark.config
+class TestPluginConfigDefaults:
+    """Test PluginConfig default value initialization."""
+
+    def test_create_default_instance(self):
+        """Test creating a default PluginConfig instance."""
+        config = PluginConfig()
+
+        assert config.enable_message_capture is True
+        assert config.enable_auto_learning is True
+        assert config.enable_realtime_learning is False
+        assert config.enable_realtime_llm_filter is False
+        assert config.enable_realtime_v2_processing is False
+        assert config.enable_realtime_expression_learning is False
+        assert config.enable_llm_hooks is False
+        assert config.enable_web_interface is True
+        assert config.enable_webui_password is False
+        assert config.webui_initial_password == ""
+        assert config.web_interface_port == 7833
+        assert config.web_interface_host == "127.0.0.1"
+        assert config.log_level == "info"
+        assert config.llm_hook_injection_target == "extra_user_content_parts"
+        assert config.context_injection_position == "end"
+
+    def test_create_default_classmethod(self):
+        """Test the create_default classmethod."""
+        config = PluginConfig.create_default()
+
+        assert isinstance(config, PluginConfig)
+        assert config.learning_interval_hours == 6
+        assert config.min_messages_for_learning == 50
+        assert config.max_messages_per_batch == 200
+        assert config.expression_learning_trigger_messages == 10
+        assert config.expression_learning_min_interval_seconds == 3600
+        assert config.topic_detection_interval_messages == 10
+        assert config.context_injection_position == "end"
+
+    def test_default_learning_parameters(self):
+        """Test default learning parameter values."""
+        config = PluginConfig()
+
+        assert config.message_min_length == 5
+        assert config.message_max_length == 500
+        assert config.confidence_threshold == 0.7
+        assert config.relevance_threshold == 0.6
+        assert config.style_analysis_batch_size == 100
+        assert config.style_update_threshold == 0.6
+
+    def test_default_database_settings(self):
+        """Test default database configuration values."""
+        config = PluginConfig()
+
+        assert config.db_type == "postgresql"
+        assert config.mysql_host == "localhost"
+        assert config.mysql_port == 3306
+        assert config.postgresql_host == "localhost"
+        assert config.postgresql_port == 5432
+        assert config.max_connections == 10
+
+    def test_default_affection_settings(self):
+        """Test default affection system configuration."""
+        config = PluginConfig()
+
+        assert config.enable_affection_system is True
+        assert config.max_total_affection == 250
+        assert config.max_user_affection == 100
+        assert config.affection_decay_rate == 0.95
+
+    def test_default_provider_ids_none(self):
+        """Test provider IDs default to None."""
+        config = PluginConfig()
+
+        assert config.filter_provider_id is None
+        assert config.refine_provider_id is None
+        assert config.reinforce_provider_id is None
+        assert config.embedding_provider_id is None
+        assert config.rerank_provider_id is None
+        assert config.provider_retry_interval_seconds == 10.0
+
+    def test_sqlalchemy_always_true(self):
+        """Test that use_sqlalchemy is always True (hardcoded)."""
+        config = PluginConfig()
+        assert config.use_sqlalchemy is True
+
+    def test_default_feature_delegation_settings(self):
+        """Memory and reply delegation should be enabled by default."""
+        config = PluginConfig()
+
+        assert config.delegate_memory_to_livingmemory is True
+        assert config.livingmemory_plugin_name == "LivingMemory"
+        assert config.disable_local_memory_when_delegated is True
+        assert config.delegate_reply_to_group_chat_plus is True
+        assert config.group_chat_plus_plugin_name == "astrbot_plugin_group_chat_plus"
+        assert config.disable_local_reply_when_delegated is True
+
+
+@pytest.mark.unit
+@pytest.mark.config
+class TestPluginConfigFromDict:
+    """Test PluginConfig creation from configuration dict."""
+
+    def test_create_from_basic_config(self):
+        """Test creating config from a basic configuration dict."""
+        raw_config = {
+            'Self_Learning_Basic': {
+                'enable_message_capture': False,
+                'enable_auto_learning': False,
+                'enable_realtime_llm_filter': True,
+                'enable_webui_password': True,
+                'webui_initial_password': 'InitPass123!',
+                'web_interface_port': 8080,
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.enable_message_capture is False
+        assert config.enable_auto_learning is False
+        assert config.enable_realtime_llm_filter is True
+        assert config.enable_webui_password is True
+        assert config.webui_initial_password == 'InitPass123!'
+        assert config.web_interface_port == 8080
+        assert config.data_dir == "/tmp/test"
+
+    def test_create_from_config_with_log_level(self):
+        """Test creating config with an explicit AstrBot log level."""
+        raw_config = {
+            'Advanced_Settings': {
+                'debug_mode': False,
+                'log_level': 'warning',
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.debug_mode is False
+        assert config.log_level == 'warning'
+
+    def test_create_from_config_with_trace_log_level(self):
+        """Trace is an explicit level for function-chain diagnostics."""
+        raw_config = {
+            'Advanced_Settings': {
+                'debug_mode': False,
+                'log_level': 'trace',
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.debug_mode is False
+        assert config.log_level == 'trace'
+
+    def test_create_from_config_debug_mode_defaults_to_debug_log_level(self):
+        """debug_mode remains a shorthand for verbose logging when log_level is omitted."""
+        raw_config = {
+            'Advanced_Settings': {
+                'debug_mode': True,
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.debug_mode is True
+        assert config.log_level == 'debug'
+
+    def test_create_from_config_with_model_settings(self):
+        """Test config creation with model configuration."""
+        raw_config = {
+            'Model_Configuration': {
+                'filter_provider_id': 'provider_1',
+                'refine_provider_id': 'provider_2',
+                'reinforce_provider_id': 'provider_3',
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.filter_provider_id == 'provider_1'
+        assert config.refine_provider_id == 'provider_2'
+        assert config.reinforce_provider_id == 'provider_3'
+
+    def test_create_from_config_accepts_flat_model_provider_settings(self):
+        """AstrBot/runtime payloads may provide role providers without grouping."""
+        raw_config = {
+            'filter_provider_id': 'provider_filter',
+            'refine_provider_id': 'provider_refine',
+            'reinforce_provider_id': 'provider_reinforce',
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.filter_provider_id == 'provider_filter'
+        assert config.refine_provider_id == 'provider_refine'
+        assert config.reinforce_provider_id == 'provider_reinforce'
+
+    def test_create_from_config_missing_data_dir(self):
+        """Test config creation with empty data_dir uses fallback."""
+        config = PluginConfig.create_from_config({}, data_dir="")
+
+        assert config.data_dir == DEFAULT_DATA_DIR
+
+    def test_create_from_config_with_database_settings(self):
+        """Test config creation with database settings."""
+        raw_config = {
+            'Database_Settings': {
+                'db_type': 'mysql',
+                'mysql_host': '192.168.1.100',
+                'mysql_port': 3307,
+                'mysql_user': 'admin',
+                'mysql_password': 'secret',
+                'mysql_database': 'test_db',
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.db_type == 'mysql'
+        assert config.mysql_host == '192.168.1.100'
+        assert config.mysql_port == 3307
+        assert config.mysql_user == 'admin'
+        assert config.mysql_database == 'test_db'
+
+    def test_create_from_config_with_postgresql_settings(self):
+        """Test config creation with PostgreSQL settings."""
+        raw_config = {
+            'Database_Settings': {
+                'db_type': 'postgresql',
+                'postgresql_host': '192.168.1.200',
+                'postgresql_port': 5433,
+                'postgresql_user': 'pg_admin',
+                'postgresql_password': 'secret',
+                'postgresql_database': 'learning_db',
+                'postgresql_schema': 'bot_space',
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.db_type == 'postgresql'
+        assert config.postgresql_host == '192.168.1.200'
+        assert config.postgresql_port == 5433
+        assert config.postgresql_user == 'pg_admin'
+        assert config.postgresql_database == 'learning_db'
+        assert config.postgresql_schema == 'bot_space'
+
+    def test_create_from_config_with_v2_settings(self):
+        """Test config creation with v2 architecture settings."""
+        raw_config = {
+            'V2_Architecture_Settings': {
+                'embedding_provider_id': 'embed_provider',
+                'rerank_provider_id': 'rerank_provider',
+                'provider_retry_interval_seconds': 2.5,
+                'enable_realtime_v2_processing': True,
+                'knowledge_engine': 'lightrag',
+                'memory_engine': 'mem0',
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.embedding_provider_id == 'embed_provider'
+        assert config.rerank_provider_id == 'rerank_provider'
+        assert config.provider_retry_interval_seconds == 2.5
+        assert config.enable_realtime_v2_processing is True
+        assert config.knowledge_engine == 'lightrag'
+        assert config.memory_engine == 'mem0'
+
+    def test_create_from_config_with_integration_settings(self):
+        """Test config creation with companion plugin delegation settings."""
+        raw_config = {
+            'Integration_Settings': {
+                'delegate_memory_to_livingmemory': False,
+                'livingmemory_plugin_name': 'CustomMemory',
+                'disable_local_memory_when_delegated': False,
+                'delegate_reply_to_group_chat_plus': False,
+                'group_chat_plus_plugin_name': 'CustomReply',
+                'disable_local_reply_when_delegated': False,
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.delegate_memory_to_livingmemory is False
+        assert config.livingmemory_plugin_name == 'CustomMemory'
+        assert config.disable_local_memory_when_delegated is False
+        assert config.delegate_reply_to_group_chat_plus is False
+        assert config.group_chat_plus_plugin_name == 'CustomReply'
+        assert config.disable_local_reply_when_delegated is False
+
+    def test_create_from_config_with_webui_extra_setting_groups(self):
+        """WebUI-only setting groups should survive plugin-page refresh/restart."""
+        raw_config = {
+            'persona_merge_strategy': 'replace',
+            'MaiBot_Enhancement': {
+                'enable_maibot_features': False,
+                'enable_expression_patterns': False,
+                'enable_realtime_expression_learning': True,
+                'enable_memory_graph': False,
+                'enable_knowledge_graph': False,
+                'enable_time_decay': False,
+            },
+            'Persona_Evolution_Settings': {
+                'persona_merge_strategy': 'append',
+                'max_mood_imitation_dialogs': 12,
+                'enable_persona_evolution': False,
+                'persona_compatibility_threshold': 0.7,
+                'use_persona_manager_updates': False,
+                'auto_apply_persona_updates': False,
+                'persona_update_backup_enabled': False,
+            },
+            'Runtime_Internal_Settings': {
+                'llm_hook_injection_target': 'prompt',
+                'enable_llm_hooks': True,
+                'enable_memory_cleanup': False,
+                'memory_cleanup_days': 14,
+                'memory_importance_threshold': 0.45,
+                'shutdown_step_timeout': 11,
+                'task_cancel_timeout': 6,
+                'service_stop_timeout': 7,
+            },
+            'Learning_Parameters': {
+                'expression_learning_min_interval_seconds': 120,
+            },
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.enable_maibot_features is False
+        assert config.enable_expression_patterns is False
+        assert config.enable_realtime_expression_learning is True
+        assert config.enable_memory_graph is False
+        assert config.enable_knowledge_graph is False
+        assert config.enable_time_decay is False
+        assert config.persona_merge_strategy == 'append'
+        assert config.max_mood_imitation_dialogs == 12
+        assert config.enable_persona_evolution is False
+        assert config.persona_compatibility_threshold == 0.7
+        assert config.use_persona_manager_updates is False
+        assert config.auto_apply_persona_updates is False
+        assert config.persona_update_backup_enabled is False
+        assert config.llm_hook_injection_target == 'prompt'
+        assert config.enable_llm_hooks is True
+        assert config.enable_memory_cleanup is False
+        assert config.memory_cleanup_days == 14
+        assert config.memory_importance_threshold == 0.45
+        assert config.shutdown_step_timeout == 11
+        assert config.task_cancel_timeout == 6
+        assert config.service_stop_timeout == 7
+        assert config.expression_learning_min_interval_seconds == 120
+
+    def test_create_from_empty_config(self):
+        """Test config creation from empty dict uses all defaults."""
+        config = PluginConfig.create_from_config({}, data_dir="/tmp/test")
+
+        assert config.enable_message_capture is True
+        assert config.target_qq_list == []
+        assert config.learning_interval_hours == 6
+        assert config.db_type == 'postgresql'
+        assert config.llm_hook_injection_target == 'extra_user_content_parts'
+
+    def test_llm_hook_injection_target_aliases_normalize_to_cache_friendly_default(self):
+        """Short aliases should still resolve to the cache-friendly AstrBot API."""
+        config = PluginConfig(llm_hook_injection_target="user_message_tail")
+
+        assert config.llm_hook_injection_target == "extra_user_content_parts"
+
+    def test_target_list_blank_values_keep_full_learning_default(self):
+        """Blank settings-page rows should not disable full learning."""
+        raw_config = {
+            'Target_Settings': {
+                'target_qq_list': ['', '   ', '\n'],
+                'target_blacklist': [' ', 'group_123'],
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.target_qq_list == []
+        assert config.target_blacklist == ['group_123']
+
+    def test_target_list_full_learning_markers_normalize_to_empty_whitelist(self):
+        """Explicit all/full markers should preserve full-learning behavior."""
+        raw_config = {
+            'Target_Settings': {
+                'target_qq_list': ['all', '123456'],
+            }
+        }
+
+        config = PluginConfig.create_from_config(raw_config, data_dir="/tmp/test")
+
+        assert config.target_qq_list == []
+
+    def test_extra_fields_ignored(self):
+        """Test that extra/unknown fields are ignored."""
+        config = PluginConfig(
+            unknown_field_1="value1",
+            unknown_field_2=42,
+        )
+        assert not hasattr(config, 'unknown_field_1')
+
+
+@pytest.mark.unit
+@pytest.mark.config
+class TestPluginConfigValidation:
+    """Test PluginConfig validation logic."""
+
+    def test_valid_config_no_errors(self):
+        """Test validation of a valid default config."""
+        config = PluginConfig(
+            filter_provider_id="provider_1",
+            refine_provider_id="provider_2",
+        )
+        errors = config.validate_config()
+
+        # Should have no blocking errors (may have warnings for reinforce)
+        blocking_errors = [e for e in errors if not e.startswith(" ")]
+        assert len(blocking_errors) == 0
+
+    def test_invalid_learning_interval(self):
+        """Test validation catches invalid learning interval."""
+        config = PluginConfig(learning_interval_hours=0)
+        errors = config.validate_config()
+
+        assert any("学习间隔必须大于0" in e for e in errors)
+
+    def test_invalid_min_messages(self):
+        """Test validation catches invalid min messages for learning."""
+        config = PluginConfig(min_messages_for_learning=0)
+        errors = config.validate_config()
+
+        assert any("最少学习消息数量必须大于0" in e for e in errors)
+
+    def test_invalid_max_batch_size(self):
+        """Test validation catches invalid max batch size."""
+        config = PluginConfig(max_messages_per_batch=-1)
+        errors = config.validate_config()
+
+        assert any("每批最大消息数量必须大于0" in e for e in errors)
+
+    def test_invalid_message_length_range(self):
+        """Test validation catches min_length >= max_length."""
+        config = PluginConfig(message_min_length=500, message_max_length=100)
+        errors = config.validate_config()
+
+        assert any("最小长度必须小于最大长度" in e for e in errors)
+
+    def test_invalid_confidence_threshold(self):
+        """Test validation catches confidence threshold out of range."""
+        config = PluginConfig(confidence_threshold=1.5)
+        errors = config.validate_config()
+
+        assert any("置信度阈值必须在0-1之间" in e for e in errors)
+
+    def test_invalid_style_threshold(self):
+        """Test validation catches style update threshold out of range."""
+        config = PluginConfig(style_update_threshold=-0.1)
+        errors = config.validate_config()
+
+        assert any("风格更新阈值必须在0-1之间" in e for e in errors)
+
+    def test_no_providers_configured(self):
+        """Test validation warns when no providers are configured."""
+        config = PluginConfig(
+            filter_provider_id=None,
+            refine_provider_id=None,
+            reinforce_provider_id=None,
+        )
+        errors = config.validate_config()
+
+        assert any("至少需要配置一个模型提供商ID" in e for e in errors)
+
+    def test_partial_providers_configured(self):
+        """Test validation with only some providers configured."""
+        config = PluginConfig(
+            filter_provider_id="provider_1",
+            refine_provider_id=None,
+            reinforce_provider_id=None,
+        )
+        errors = config.validate_config()
+
+        # Should have warnings but no blocking errors
+        blocking_errors = [e for e in errors if not e.startswith(" ")]
+        assert len(blocking_errors) == 0
+
+    def test_lightrag_hybrid_livingmemory_combo_warns_without_blocking(self):
+        """LightRAG hybrid plus LivingMemory delegation should surface cost warnings."""
+        config = PluginConfig(
+            filter_provider_id="provider_1",
+            knowledge_engine="lightrag",
+            lightrag_query_mode="hybrid",
+            delegate_memory_to_livingmemory=True,
+        )
+
+        warnings = get_config_cost_warnings(config)
+        errors = config.validate_config()
+        blocking_errors = [e for e in errors if not e.startswith(" ")]
+
+        assert is_lightrag_livingmemory_high_cost_config(config) is True
+        assert warnings
+        assert "LivingMemory" in warnings[0]
+        assert "token" in warnings[0]
+        assert any("LivingMemory" in error and error.startswith(" ") for error in errors)
+        assert blocking_errors == []
+
+    def test_lightrag_local_livingmemory_combo_does_not_warn(self):
+        """Low-latency LightRAG local mode should not raise the high-cost warning."""
+        config = PluginConfig(
+            knowledge_engine="lightrag",
+            lightrag_query_mode="local",
+            delegate_memory_to_livingmemory=True,
+        )
+
+        assert is_lightrag_livingmemory_high_cost_config(config) is False
+        assert get_config_cost_warnings(config) == []
+
+    def test_lightrag_hybrid_string_false_delegation_does_not_warn(self):
+        """Raw grouped config values should parse string false as disabled."""
+        raw_config = {
+            "V2_Architecture_Settings": {
+                "knowledge_engine": "lightrag",
+                "lightrag_query_mode": "hybrid",
+            },
+            "Integration_Settings": {
+                "delegate_memory_to_livingmemory": "false",
+            },
+        }
+
+        assert is_lightrag_livingmemory_high_cost_config(raw_config) is False
+        assert get_config_cost_warnings(raw_config) == []
+
+    @pytest.mark.parametrize(
+        "raw_db_type",
+        ["postgres", "pg", "pgsql", "postgresql", "", None],
+    )
+    def test_normalize_db_type_defaults_and_postgresql_aliases(self, raw_db_type):
+        """PostgreSQL aliases and empty values should resolve to the default type."""
+        assert normalize_db_type(raw_db_type) == DEFAULT_DB_TYPE
+
+    @pytest.mark.parametrize("alias", ["postgres", "pg", "pgsql"])
+    def test_validate_config_accepts_postgresql_aliases(self, alias):
+        """Validation accepts supported PostgreSQL aliases."""
+        config = PluginConfig(
+            db_type=alias,
+            filter_provider_id="provider_1",
+        )
+        errors = config.validate_config()
+
+        assert "数据库类型必须是 postgresql、sqlite 或 mysql" not in errors
+
+    @pytest.mark.parametrize("raw_db_type", [DEFAULT_DB_TYPE, ""])
+    def test_validate_config_accepts_default_and_empty_db_type(self, raw_db_type):
+        """Validation defaults missing or empty database type to PostgreSQL."""
+        config = PluginConfig(
+            db_type=raw_db_type,
+            filter_provider_id="provider_1",
+        )
+        errors = config.validate_config()
+
+        assert "数据库类型必须是 postgresql、sqlite 或 mysql" not in errors
+
+    def test_validate_config_rejects_invalid_db_type(self):
+        """Validation rejects unsupported database types."""
+        config = PluginConfig(
+            db_type="oracle",
+            filter_provider_id="provider_1",
+        )
+        errors = config.validate_config()
+
+        assert "数据库类型必须是 postgresql、sqlite 或 mysql" in errors
+
+    def test_invalid_log_level_rejected(self):
+        """Test validation catches invalid log levels."""
+        with pytest.raises(ValueError):
+            PluginConfig(log_level="verbose")
+
+
+@pytest.mark.unit
+@pytest.mark.config
+class TestPluginConfigSerialization:
+    """Test PluginConfig serialization and deserialization."""
+
+    def test_to_dict(self):
+        """Test converting config to dict."""
+        config = PluginConfig(
+            enable_message_capture=False,
+            web_interface_port=9090,
+        )
+
+        config_dict = config.to_dict()
+
+        assert isinstance(config_dict, dict)
+        assert config_dict['enable_message_capture'] is False
+        assert config_dict['web_interface_port'] == 9090
+        assert 'learning_interval_hours' in config_dict
+
+    def test_save_to_file_success(self):
+        """Test saving config to file."""
+        config = PluginConfig()
+
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.json', delete=False
+        ) as f:
+            filepath = f.name
+
+        try:
+            result = config.save_to_file(filepath)
+
+            assert result is True
+            assert os.path.exists(filepath)
+
+            with open(filepath, 'r', encoding='utf-8') as f:
+                saved_data = json.load(f)
+            assert saved_data['enable_message_capture'] is True
+        finally:
+            os.unlink(filepath)
+
+    def test_load_from_file_success(self):
+        """Test loading config from existing file."""
+        config_data = {
+            'enable_message_capture': False,
+            'web_interface_port': 9999,
+            'learning_interval_hours': 12,
+            'log_level': 'error',
+        }
+
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.json', delete=False
+        ) as f:
+            json.dump(config_data, f)
+            filepath = f.name
+
+        try:
+            loaded_config = PluginConfig.load_from_file(filepath)
+
+            assert loaded_config.enable_message_capture is False
+            assert loaded_config.web_interface_port == 9999
+            assert loaded_config.learning_interval_hours == 12
+            assert loaded_config.log_level == 'error'
+        finally:
+            os.unlink(filepath)
+
+    def test_load_from_nonexistent_file(self):
+        """Test loading config from nonexistent file returns defaults."""
+        loaded_config = PluginConfig.load_from_file("/nonexistent/path.json")
+
+        assert loaded_config.enable_message_capture is True
+        assert loaded_config.learning_interval_hours == 6
+
+    def test_load_from_file_with_data_dir(self):
+        """Test loading config with explicit data_dir override."""
+        config_data = {'enable_message_capture': True}
+
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.json', delete=False
+        ) as f:
+            json.dump(config_data, f)
+            filepath = f.name
+
+        try:
+            loaded_config = PluginConfig.load_from_file(
+                filepath, data_dir="/custom/data/dir"
+            )
+
+            assert loaded_config.data_dir == "/custom/data/dir"
+        finally:
+            os.unlink(filepath)
+
+    def test_load_from_corrupt_file(self):
+        """Test loading config from corrupt file returns defaults."""
+        with tempfile.NamedTemporaryFile(
+            mode='w', suffix='.json', delete=False
+        ) as f:
+            f.write("this is not valid json {{{")
+            filepath = f.name
+
+        try:
+            loaded_config = PluginConfig.load_from_file(filepath)
+
+            # Should return default config
+            assert loaded_config.enable_message_capture is True
+        finally:
+            os.unlink(filepath)
+
+    def test_create_from_runtime_sources_ignores_legacy_webui_config_copy(self, tmp_path):
+        """Legacy plugin_data/config.json must not override AstrBot plugin settings."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "db_type": "postgresql",
+                    "postgresql_host": "stale-webui-host",
+                    "postgresql_password": "stale-secret",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        config = PluginConfig.create_from_runtime_sources(
+            {
+                "Database_Settings": {
+                    "db_type": "sqlite",
+                    "postgresql_host": "plugin-page-host",
+                    "postgresql_password": "plugin-page-secret",
+                }
+            },
+            data_dir=str(tmp_path),
+            config_file=str(config_file),
+        )
+
+        assert config.data_dir == str(tmp_path)
+        assert config.db_type == "sqlite"
+        assert config.postgresql_host == "plugin-page-host"
+        assert config.postgresql_password == "plugin-page-secret"
+
+    def test_create_from_runtime_sources_ignores_newer_legacy_config_file(self, tmp_path):
+        """File mtimes must not make the legacy WebUI copy authoritative again."""
+        config_file = tmp_path / "plugin_data" / "config.json"
+        config_file.parent.mkdir(parents=True)
+        config_file.write_text(
+            json.dumps(
+                {
+                    "db_type": "postgresql",
+                    "postgresql_host": "webui-host",
+                    "postgresql_password": "webui-secret",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        astrbot_config_file = tmp_path / "config" / "astrbot_plugin_self_learning_config.json"
+        astrbot_config_file.parent.mkdir(parents=True)
+        astrbot_config_file.write_text("{}", encoding="utf-8")
+        os.utime(astrbot_config_file, (1_700_000_000, 1_700_000_000))
+        os.utime(config_file, (1_700_000_010, 1_700_000_010))
+
+        config = PluginConfig.create_from_runtime_sources(
+            {
+                "Database_Settings": {
+                    "db_type": "postgresql",
+                    "postgresql_host": "astrbot-host",
+                    "postgresql_password": "astrbot-secret",
+                }
+            },
+            data_dir=str(config_file.parent),
+            config_file=str(config_file),
+            astrbot_config_file=str(astrbot_config_file),
+        )
+
+        assert config.db_type == "postgresql"
+        assert config.postgresql_host == "astrbot-host"
+        assert config.postgresql_password == "astrbot-secret"
+
+    def test_create_from_runtime_sources_reads_grouped_astrbot_config(self, tmp_path):
+        """Grouped AstrBot config remains the single runtime source."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "Database_Settings": {
+                        "db_type": "sqlite",
+                        "postgresql_host": "pg",
+                    },
+                    "Self_Learning_Basic": {
+                        "enable_message_capture": False,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        config = PluginConfig.create_from_runtime_sources(
+            {
+                "Database_Settings": {
+                    "db_type": "postgresql",
+                    "postgresql_host": "astrbot-pg",
+                },
+                "Self_Learning_Basic": {
+                    "enable_message_capture": False,
+                },
+            },
+            data_dir=str(tmp_path),
+            config_file=str(config_file),
+        )
+
+        assert config.db_type == "postgresql"
+        assert config.postgresql_host == "astrbot-pg"
+        assert config.enable_message_capture is False
+
+    def test_create_from_runtime_sources_keeps_astrbot_role_providers_over_legacy_empty_values(self, tmp_path):
+        """Old WebUI snapshots with empty provider IDs must not erase plugin-page choices."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "Model_Configuration": {
+                        "filter_provider_id": None,
+                        "refine_provider_id": "",
+                    },
+                    "reinforce_provider_id": None,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        config = PluginConfig.create_from_runtime_sources(
+            {
+                "Model_Configuration": {
+                    "filter_provider_id": "siliconflow/Qwen/Qwen3-8B",
+                    "refine_provider_id": "deepseek/deepseek-v4-flash",
+                    "reinforce_provider_id": "deepseek/deepseek-v4-pro",
+                }
+            },
+            data_dir=str(tmp_path),
+            config_file=str(config_file),
+        )
+
+        assert config.filter_provider_id == "siliconflow/Qwen/Qwen3-8B"
+        assert config.refine_provider_id == "deepseek/deepseek-v4-flash"
+        assert config.reinforce_provider_id == "deepseek/deepseek-v4-pro"
+
+    def test_create_from_runtime_sources_uses_astrbot_grouped_fields_over_legacy_top_level(self, tmp_path):
+        """Legacy top-level fields must not override grouped AstrBot settings."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(
+            json.dumps(
+                {
+                    "Database_Settings": {
+                        "db_type": "postgresql",
+                        "postgresql_host": "grouped-host",
+                    },
+                    "db_type": "sqlite",
+                    "postgresql_host": "top-level-host",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        config = PluginConfig.create_from_runtime_sources(
+            {
+                "Database_Settings": {
+                    "db_type": "postgresql",
+                    "postgresql_host": "astrbot-grouped-host",
+                }
+            },
+            data_dir=str(tmp_path),
+            config_file=str(config_file),
+        )
+
+        assert config.db_type == "postgresql"
+        assert config.postgresql_host == "astrbot-grouped-host"
+
+    def test_create_from_runtime_sources_invalid_json_keeps_runtime_config(self, tmp_path):
+        """Malformed legacy JSON should be ignored."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text("{not valid json", encoding="utf-8")
+
+        config = PluginConfig.create_from_runtime_sources(
+            {
+                "Database_Settings": {
+                    "db_type": "postgresql",
+                    "postgresql_host": "runtime-host",
+                }
+            },
+            data_dir=str(tmp_path),
+            config_file=str(config_file),
+        )
+
+        assert config.db_type == "postgresql"
+        assert config.postgresql_host == "runtime-host"
