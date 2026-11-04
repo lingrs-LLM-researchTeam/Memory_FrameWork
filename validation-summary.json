@@ -1,113 +1,359 @@
 {
-  "release": "1.1.0",
-  "verified_at": "2026-11-01T00:09:15.397643+08:00",
+  "release": "1.2.1",
+  "date": "2026-11-04",
+  "checked_environment": "Windows / maintained AstrBot 4.29.1 / Python 3.12.12",
+  "scope": "Automatic dialogue summaries only; real scheduler, SQLite and source links; synthetic provider output and local Qwen text token estimate",
   "status": "passed",
-  "tests_passed": 469,
-  "tests": {
-    "test_distribution": 7,
-    "test_unified_modules": 7,
-    "livingmemory": 218,
-    "self_learning": 237
-  },
   "paid_api_calls": 0,
   "production_deployed": false,
-  "production_files_verified_unchanged": 9,
   "runtime_package": {
     "plugin": "astrbot_plugin_livingmemory",
-    "file": "astrbot_plugin_livingmemory-memoryfw-1.1.0.zip",
-    "sha256": "cf68f65278ecd8661e38e33ecd6fe4382af77e5df431e4d924724b47cc482c45",
-    "bytes": 3975781,
-    "file_count": 491
+    "file": "astrbot_plugin_livingmemory-memoryfw-1.2.1.zip",
+    "sha256": "53a6f79e7e3c27ef04db2deb81a583baf910a47b8774e78cb25621984d343fb0",
+    "bytes": 3895518,
+    "file_count": 470
   },
-  "source_files_verified": 757,
-  "protected_files_unchanged": 225,
-  "original_schema_groups_unchanged": 39,
-  "resource_observations": {
-    "old_plugin_zip_bytes_sum": 4560775,
-    "new_plugin_zip_bytes": 3975781,
-    "archive_bytes_reduction_percent": 12.826635823955357,
-    "old_runtime_file_count": 755,
-    "new_runtime_file_count": 491,
-    "old_registered_plugins": 2,
-    "new_registered_plugins": 1,
-    "old_registered_handlers": 34,
-    "new_registered_handlers": 33,
-    "baseline_process_rss_mib": [
-      281.81640625,
-      279.90234375
-    ],
-    "unified_process_rss_mib": [
-      280.98828125,
-      278.59765625
-    ],
-    "memory_only_process_rss_mib": 248.3046875,
-    "scope": "Whole-process snapshots, synthetic empty/small databases, auto-learning disabled; not a steady-state benchmark."
+  "default_trigger": "rounds",
+  "fixed_slot_default_min_messages": 20,
+  "tests": {
+    "memory_and_replays": 238,
+    "learning": 237,
+    "distribution": 7,
+    "unified_modules": 7
   },
-  "module_switch": [
+  "comparison": [
     {
-      "phase": 1,
-      "core_started": true,
-      "plugins_ready": true,
-      "external_model_calls": 0,
-      "original_messages": 0,
-      "synthetic_capture_and_recall": true,
-      "replay_blocked": false,
-      "runtime_profile": {
-        "registered_plugins": 1,
-        "registered_handlers": 33,
-        "learning_imported_modules": 166,
-        "pending_async_tasks": 18,
-        "process_rss_bytes": 294637568
+      "mode": "daily_slots",
+      "layout": "all_day",
+      "input_sha256": "c05c72acf512f9c1531e4eeaa145a8efb6e8a91dbf866c720fd4c86449598320",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 264,
+        "calls": 8,
+        "estimated_input": 35500,
+        "estimated_output": 696,
+        "max_wait_seconds": 72000
       },
-      "stopped_cleanly": true,
-      "mode": "memory_and_learning",
-      "reenabled_source_reconciled": false
+      "sessions": {
+        "busy": {
+          "messages": 200,
+          "covered": 200,
+          "max_wait_seconds": 28236,
+          "calls": 4,
+          "estimated_input": 22020,
+          "estimated_output": 466
+        },
+        "steady": {
+          "messages": 60,
+          "covered": 60,
+          "max_wait_seconds": 45000,
+          "calls": 2,
+          "estimated_input": 8450,
+          "estimated_output": 156
+        },
+        "quiet": {
+          "messages": 4,
+          "covered": 4,
+          "max_wait_seconds": 72000,
+          "calls": 2,
+          "estimated_input": 5030,
+          "estimated_output": 74
+        }
+      },
+      "external_api_calls": 0
     },
     {
-      "phase": 1,
-      "mode": "memory_only",
-      "core_started": true,
-      "single_plugin": true,
-      "learning_not_imported": true,
-      "learning_data_not_created": false,
-      "disabled_source_delivery_pending": true,
-      "external_model_calls": 0,
-      "runtime_profile": {
-        "registered_plugins": 1,
-        "registered_handlers": 33,
-        "learning_imported_modules": 0,
-        "pending_async_tasks": 16,
-        "process_rss_bytes": 260366336
+      "mode": "rounds",
+      "layout": "all_day",
+      "input_sha256": "c05c72acf512f9c1531e4eeaa145a8efb6e8a91dbf866c720fd4c86449598320",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 260,
+        "calls": 13,
+        "estimated_input": 47235,
+        "estimated_output": 825,
+        "max_wait_seconds": 32625
       },
-      "stopped_cleanly": true,
-      "reenabled_source_reconciled": false
+      "sessions": {
+        "busy": {
+          "messages": 200,
+          "covered": 200,
+          "max_wait_seconds": 10730,
+          "calls": 10,
+          "estimated_input": 36390,
+          "estimated_output": 640
+        },
+        "steady": {
+          "messages": 60,
+          "covered": 60,
+          "max_wait_seconds": 32625,
+          "calls": 3,
+          "estimated_input": 10845,
+          "estimated_output": 185
+        },
+        "quiet": {
+          "messages": 4,
+          "covered": 0,
+          "max_wait_seconds": null
+        }
+      },
+      "external_api_calls": 0
     },
     {
-      "phase": 2,
-      "core_started": true,
-      "plugins_ready": true,
-      "external_model_calls": 0,
-      "original_messages": 0,
-      "synthetic_capture_and_recall": false,
-      "replay_blocked": true,
-      "runtime_profile": {
-        "registered_plugins": 1,
-        "registered_handlers": 33,
-        "learning_imported_modules": 166,
-        "pending_async_tasks": 18,
-        "process_rss_bytes": 292130816
+      "mode": "slots_min_1",
+      "layout": "all_day",
+      "input_sha256": "c05c72acf512f9c1531e4eeaa145a8efb6e8a91dbf866c720fd4c86449598320",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 264,
+        "calls": 12,
+        "estimated_input": 45080,
+        "estimated_output": 828,
+        "max_wait_seconds": 28236
       },
-      "stopped_cleanly": true,
-      "mode": "memory_and_learning",
-      "reenabled_source_reconciled": true
+      "sessions": {
+        "busy": {
+          "messages": 200,
+          "covered": 200,
+          "max_wait_seconds": 28236,
+          "calls": 4,
+          "estimated_input": 22020,
+          "estimated_output": 466
+        },
+        "steady": {
+          "messages": 60,
+          "covered": 60,
+          "max_wait_seconds": 27000,
+          "calls": 4,
+          "estimated_input": 13240,
+          "estimated_output": 214
+        },
+        "quiet": {
+          "messages": 4,
+          "covered": 4,
+          "max_wait_seconds": 14400,
+          "calls": 4,
+          "estimated_input": 9820,
+          "estimated_output": 148
+        }
+      },
+      "external_api_calls": 0
+    },
+    {
+      "mode": "daily_slots",
+      "layout": "evening",
+      "input_sha256": "2086b0f9cff18ad37ea5180a73d7d128ff9e4df488a39712308e372dcf3597e9",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 264,
+        "calls": 7,
+        "estimated_input": 33329,
+        "estimated_output": 657,
+        "max_wait_seconds": 12166
+      },
+      "sessions": {
+        "s1": {
+          "messages": 15,
+          "covered": 15,
+          "max_wait_seconds": 12166,
+          "calls": 1,
+          "estimated_input": 3315,
+          "estimated_output": 53
+        },
+        "s2": {
+          "messages": 55,
+          "covered": 55,
+          "max_wait_seconds": 12152,
+          "calls": 1,
+          "estimated_input": 5845,
+          "estimated_output": 118
+        },
+        "s3": {
+          "messages": 42,
+          "covered": 42,
+          "max_wait_seconds": 11989,
+          "calls": 1,
+          "estimated_input": 4989,
+          "estimated_output": 101
+        },
+        "s4": {
+          "messages": 27,
+          "covered": 27,
+          "max_wait_seconds": 11854,
+          "calls": 1,
+          "estimated_input": 4086,
+          "estimated_output": 77
+        },
+        "s5": {
+          "messages": 115,
+          "covered": 115,
+          "max_wait_seconds": 11225,
+          "calls": 1,
+          "estimated_input": 9679,
+          "estimated_output": 226
+        },
+        "s6": {
+          "messages": 2,
+          "covered": 2,
+          "max_wait_seconds": 8032,
+          "calls": 1,
+          "estimated_input": 2520,
+          "estimated_output": 37
+        },
+        "s7": {
+          "messages": 8,
+          "covered": 8,
+          "max_wait_seconds": 6406,
+          "calls": 1,
+          "estimated_input": 2895,
+          "estimated_output": 45
+        }
+      },
+      "external_api_calls": 0
+    },
+    {
+      "mode": "rounds",
+      "layout": "evening",
+      "input_sha256": "2086b0f9cff18ad37ea5180a73d7d128ff9e4df488a39712308e372dcf3597e9",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 200,
+        "calls": 10,
+        "estimated_input": 36474,
+        "estimated_output": 620,
+        "max_wait_seconds": 3823
+      },
+      "sessions": {
+        "s1": {
+          "messages": 15,
+          "covered": 0,
+          "max_wait_seconds": null
+        },
+        "s2": {
+          "messages": 55,
+          "covered": 40,
+          "max_wait_seconds": 3823,
+          "calls": 2,
+          "estimated_input": 7287,
+          "estimated_output": 122
+        },
+        "s3": {
+          "messages": 42,
+          "covered": 40,
+          "max_wait_seconds": 1765,
+          "calls": 2,
+          "estimated_input": 7260,
+          "estimated_output": 122
+        },
+        "s4": {
+          "messages": 27,
+          "covered": 20,
+          "max_wait_seconds": 3364,
+          "calls": 1,
+          "estimated_input": 3646,
+          "estimated_output": 61
+        },
+        "s5": {
+          "messages": 115,
+          "covered": 100,
+          "max_wait_seconds": 3669,
+          "calls": 5,
+          "estimated_input": 18281,
+          "estimated_output": 315
+        },
+        "s6": {
+          "messages": 2,
+          "covered": 0,
+          "max_wait_seconds": null
+        },
+        "s7": {
+          "messages": 8,
+          "covered": 0,
+          "max_wait_seconds": null
+        }
+      },
+      "external_api_calls": 0
+    },
+    {
+      "mode": "slots_min_1",
+      "layout": "evening",
+      "input_sha256": "2086b0f9cff18ad37ea5180a73d7d128ff9e4df488a39712308e372dcf3597e9",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 264,
+        "calls": 7,
+        "estimated_input": 33329,
+        "estimated_output": 657,
+        "max_wait_seconds": 12166
+      },
+      "sessions": {
+        "s1": {
+          "messages": 15,
+          "covered": 15,
+          "max_wait_seconds": 12166,
+          "calls": 1,
+          "estimated_input": 3315,
+          "estimated_output": 53
+        },
+        "s2": {
+          "messages": 55,
+          "covered": 55,
+          "max_wait_seconds": 12152,
+          "calls": 1,
+          "estimated_input": 5845,
+          "estimated_output": 118
+        },
+        "s3": {
+          "messages": 42,
+          "covered": 42,
+          "max_wait_seconds": 11989,
+          "calls": 1,
+          "estimated_input": 4989,
+          "estimated_output": 101
+        },
+        "s4": {
+          "messages": 27,
+          "covered": 27,
+          "max_wait_seconds": 11854,
+          "calls": 1,
+          "estimated_input": 4086,
+          "estimated_output": 77
+        },
+        "s5": {
+          "messages": 115,
+          "covered": 115,
+          "max_wait_seconds": 11225,
+          "calls": 1,
+          "estimated_input": 9679,
+          "estimated_output": 226
+        },
+        "s6": {
+          "messages": 2,
+          "covered": 2,
+          "max_wait_seconds": 8032,
+          "calls": 1,
+          "estimated_input": 2520,
+          "estimated_output": 37
+        },
+        "s7": {
+          "messages": 8,
+          "covered": 8,
+          "max_wait_seconds": 6406,
+          "calls": 1,
+          "estimated_input": 2895,
+          "estimated_output": 45
+        }
+      },
+      "external_api_calls": 0
     }
   ],
+  "source_files_verified": 738,
   "real_astrbot_extractor": true,
-  "limitations": [
-    "No paid-model or real conversation quality evaluation",
-    "No sustained CPU/throughput/load benchmark",
-    "Only the local maintained AstrBot 4.29.1 core and Windows Python 3.12.12 were validated",
-    "Mode changes require plugin reload; database schemas and separate legacy data paths retained"
-  ],
-  "historical_releases_retained": true
+  "tests_passed": 489
 }

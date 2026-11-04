@@ -1,0 +1,221 @@
+{
+  "release": "1.2.0",
+  "date": "2026-11-04",
+  "status": "passed",
+  "production_deployed": false,
+  "paid_api_calls": 0,
+  "schedule_timezone": "UTC+08:00",
+  "default_trigger": "rounds",
+  "tests_passed": 536,
+  "tests": {
+    "memory_and_replay": 232,
+    "learning": 237,
+    "store_and_window": 53,
+    "distribution": 7,
+    "module_contracts": 7
+  },
+  "runtime_package": {
+    "plugin": "astrbot_plugin_livingmemory",
+    "file": "astrbot_plugin_livingmemory-memoryfw-1.2.0.zip",
+    "sha256": "d78166219c196abbc98732b4013f0dbf8bce9d54eb673801add3758864b03062",
+    "bytes": 3978492,
+    "file_count": 492
+  },
+  "comparison": [
+    {
+      "mode": "daily_slots",
+      "layout": "all_day",
+      "input_sha256": "c05c72acf512f9c1531e4eeaa145a8efb6e8a91dbf866c720fd4c86449598320",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 264,
+        "calls": 12,
+        "estimated_input": 45080,
+        "estimated_output": 828
+      },
+      "sessions": {
+        "busy": {
+          "messages": 200,
+          "covered": 200,
+          "calls": 4,
+          "estimated_input": 22020,
+          "estimated_output": 466
+        },
+        "steady": {
+          "messages": 60,
+          "covered": 60,
+          "calls": 4,
+          "estimated_input": 13240,
+          "estimated_output": 214
+        },
+        "quiet": {
+          "messages": 4,
+          "covered": 4,
+          "calls": 4,
+          "estimated_input": 9820,
+          "estimated_output": 148
+        }
+      },
+      "external_api_calls": 0
+    },
+    {
+      "mode": "rounds",
+      "layout": "all_day",
+      "input_sha256": "c05c72acf512f9c1531e4eeaa145a8efb6e8a91dbf866c720fd4c86449598320",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 260,
+        "calls": 13,
+        "estimated_input": 47235,
+        "estimated_output": 825
+      },
+      "sessions": {
+        "busy": {
+          "messages": 200,
+          "covered": 200,
+          "calls": 10,
+          "estimated_input": 36390,
+          "estimated_output": 640
+        },
+        "steady": {
+          "messages": 60,
+          "covered": 60,
+          "calls": 3,
+          "estimated_input": 10845,
+          "estimated_output": 185
+        },
+        "quiet": {
+          "messages": 4,
+          "covered": 0
+        }
+      },
+      "external_api_calls": 0
+    },
+    {
+      "mode": "daily_slots",
+      "layout": "evening",
+      "input_sha256": "2086b0f9cff18ad37ea5180a73d7d128ff9e4df488a39712308e372dcf3597e9",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 264,
+        "calls": 7,
+        "estimated_input": 33329,
+        "estimated_output": 657
+      },
+      "sessions": {
+        "s1": {
+          "messages": 15,
+          "covered": 15,
+          "calls": 1,
+          "estimated_input": 3315,
+          "estimated_output": 53
+        },
+        "s2": {
+          "messages": 55,
+          "covered": 55,
+          "calls": 1,
+          "estimated_input": 5845,
+          "estimated_output": 118
+        },
+        "s3": {
+          "messages": 42,
+          "covered": 42,
+          "calls": 1,
+          "estimated_input": 4989,
+          "estimated_output": 101
+        },
+        "s4": {
+          "messages": 27,
+          "covered": 27,
+          "calls": 1,
+          "estimated_input": 4086,
+          "estimated_output": 77
+        },
+        "s5": {
+          "messages": 115,
+          "covered": 115,
+          "calls": 1,
+          "estimated_input": 9679,
+          "estimated_output": 226
+        },
+        "s6": {
+          "messages": 2,
+          "covered": 2,
+          "calls": 1,
+          "estimated_input": 2520,
+          "estimated_output": 37
+        },
+        "s7": {
+          "messages": 8,
+          "covered": 8,
+          "calls": 1,
+          "estimated_input": 2895,
+          "estimated_output": 45
+        }
+      },
+      "external_api_calls": 0
+    },
+    {
+      "mode": "rounds",
+      "layout": "evening",
+      "input_sha256": "2086b0f9cff18ad37ea5180a73d7d128ff9e4df488a39712308e372dcf3597e9",
+      "vocabulary_sha256": "b2b1b8dfb5cc5f024bafc373121c6aba3f66f9a5a0269e243470a1de16a33186",
+      "totals": {
+        "messages": 264,
+        "covered": 200,
+        "calls": 10,
+        "estimated_input": 36474,
+        "estimated_output": 620
+      },
+      "sessions": {
+        "s1": {
+          "messages": 15,
+          "covered": 0
+        },
+        "s2": {
+          "messages": 55,
+          "covered": 40,
+          "calls": 2,
+          "estimated_input": 7287,
+          "estimated_output": 122
+        },
+        "s3": {
+          "messages": 42,
+          "covered": 40,
+          "calls": 2,
+          "estimated_input": 7260,
+          "estimated_output": 122
+        },
+        "s4": {
+          "messages": 27,
+          "covered": 20,
+          "calls": 1,
+          "estimated_input": 3646,
+          "estimated_output": 61
+        },
+        "s5": {
+          "messages": 115,
+          "covered": 100,
+          "calls": 5,
+          "estimated_input": 18281,
+          "estimated_output": 315
+        },
+        "s6": {
+          "messages": 2,
+          "covered": 0
+        },
+        "s7": {
+          "messages": 8,
+          "covered": 0
+        }
+      },
+      "external_api_calls": 0
+    }
+  ],
+  "token_scope": "Qwen ordinary-text BPE proxy on actual summary prompts and synthetic JSON outputs; no service overhead, cache, embeddings or learning",
+  "coverage": "unique completed source positions, checked against SQLite cursor and distinct memory_source_links",
+  "validation_scope": "Windows, maintained AstrBot 4.29.1, simulated clocks and providers; no live 24h production run."
+}

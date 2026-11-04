@@ -7,7 +7,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RELEASE = "1.1.0"
+RELEASE = "1.2.1"
 NAME = f"astrbot-memory-framework-{RELEASE}"
 PLUGINS = ("astrbot_plugin_livingmemory",)
 EXCLUDED = {"__pycache__", ".pytest_cache", "node_modules", ".git", ".astrbot-plugin", ".env"}

@@ -1,4 +1,4 @@
-# AstrBot 长期记忆框架 1.1.0
+# AstrBot 长期记忆框架 1.2.1
 
 此项目用于为 AstrBot 中部署的llm模型提供更强大的持续记忆与自主学习能力
 
@@ -156,6 +156,8 @@ priority = w1*importance + w2*evidence_quality + w3*recency_bu_kind + w4*indepen
 | `memory_and_learning`（默认） | 保留长期记忆、学习、反馈强化、人格审查、黑话、社交与既有可选功能；各功能继续服从自己的配置开关。 |
 | `memory_only` | 保留长期记忆；不导入学习实现，不初始化学习数据库连接、服务或后台任务。已有学习数据保留。 |
 
+1.2.1 的可安装包为 `dist/astrbot_plugin_livingmemory-memoryfw-1.2.1.zip`。
+
 修改模式后重载插件或重启 AstrBot 生效。`/lmem modules` 查看模式与学习模块状态。
 
 停机后的全新文件系统安装：
@@ -174,6 +176,8 @@ python tools/install.py --data-dir /path/to/astrbot/data --apply
 | 配置 | 当前框架行为或用途 |
 |---|---|
 | `provider_settings.embedding_provider_id` / `llm_provider_id` | 记忆向量与摘要模型；在 AstrBot 中选择相应 Provider。 |
+| `reflection_engine.summary_trigger_mode` | 默认 `rounds`，按轮数触发。选 `daily_slots` 后按北京时间 08:00、13:00、18:30、次日 00:00 整理自上次成功后新增的消息。保存后重载。 |
+| `reflection_engine.slot_min_messages` | 四时点模式的日间合批门槛，默认 20 条，可设为 1–200。小批保留到后续时点，午夜收尾；设为 1 恢复逐非空窗口整理。 |
 | `filtering_settings.memory_scope_mode` | 默认 `session`；会话过滤和人格过滤默认开启。 |
 | `agent_tools.max_total_evidence_bytes` | 默认 `7000`；自动注入、搜索和深读共享的证据字节预算，不等于模型 token 上限。 |
 | `Target_Settings.target_qq_list` / `target_blacklist` | 学习目标与排除列表；空白名单默认学习非黑名单消息，部署前按需要限制范围。 |
@@ -289,7 +293,7 @@ python plugins/astrbot_plugin_livingmemory/scripts/summarize_llm_usage.py /path/
 
 命中率为已观测命中 token 总和除以对应请求输入 token 总和，不平均单次百分比。缺少缓存计数的请求不计入分母，覆盖程度由 `cache_coverage` 表示；汇总只代表已知部分。新结构化日志不记录提示词、回复、密钥或会话 ID；原有 DEBUG 日志行为不在该承诺内。统计不替代预算账本。
 
-提示词重排把既有 `CLAIM_INSTRUCTION` 放到 system 前缀，将默认人格总结与时间规则放到人格文本之前，将记忆合并的固定 JSON 格式放到动态记忆之前。角色边界、消息选择、来源校验、摘要窗口、评分、解析、写入、重试与流式回退保持原逻辑；WebUI 自定义模板不被覆盖或自动拆分。没有新增请求、增量整理或结果缓存。
+提示词重排把既有 `CLAIM_INSTRUCTION` 放到 system 前缀，将默认人格总结与时间规则放到人格文本之前，将记忆合并的固定 JSON 格式放到动态记忆之前。角色边界、消息选择、来源校验、摘要窗口、评分、解析、写入、重试与流式回退保持原逻辑；WebUI 自定义模板不被覆盖或自动拆分。四时点增量整理的调度规则、低流量等待时间和离线 token 对照见[低流量合批报告](docs/低流量合批对照-20261104.md)。
 
 前缀可复用不代表实际缓存命中提高。模型质量、真实 token 用量、延迟与缓存效果需要固定模型、配置、输入、调用顺序和并发进行对照；离线测试不能证明输出逐字一致。
 

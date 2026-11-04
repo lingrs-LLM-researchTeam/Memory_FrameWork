@@ -1,10 +1,18 @@
+# Framework 1.2.1 低流量合批验收
+
+[调度规则与离线对照](docs/低流量合批对照-20261104.md)列出覆盖、调用与等待时间。[验证数据](validation-summary.json)记录每组输入的哈希和每个会话的结果。
+
+# Framework 1.2.0 离线验收
+
+测试环境、调用次数、覆盖率、token 估算与复现步骤见[四时点整理报告](docs/四时点增量整理与离线对照-20261104.md)，逐组数值见 [1.2.0 验证结果](docs/validation-1.2.0.json)。
+
 # 1.1.0 单插件发行验收（2026-11-01）
 
 当前版本通过 **469 项本地测试**：记忆与事件分发 218、学习 237、发行 7、模块与迁移契约 7。实际 AstrBot 解压 491 个运行文件一致，核对 757 个源码指纹；225 个受保护文件与 39 个原配置分组不变。
 
 真实核心三次模式切换启动验证了采集、召回、来源撤销、停用期间待投递、恢复补偿和防重放，均正常关闭。仅记忆不导入学习实现。完整模式的进程内存快照差异很小，不声称大幅提速；安装 ZIP 合计字节减少 12.83%。
 
-环境：本地维护 AstrBot 4.29.1、Windows、Python 3.12.12，合成数据与本地 Provider，付费 API 0 次。未自动部署，未改动生产配置或数据库。结果见 `validation-summary.json`；复现入口为 `tools/verify_release.py`、`tools/run_regressions.py`、`tools/verify_startup.py` 和 `tools/verify_module_switch.py`。使用新的隔离输出目录，核心/依赖参数沿用下方历史说明。
+环境：本地维护 AstrBot 4.29.1、Windows、Python 3.12.12，合成数据与本地 Provider，付费 API 0 次。未自动部署，未改动生产配置或数据库。该版本结果见 `docs/validation-1.1.0.json`；复现入口为 `tools/verify_release.py`、`tools/run_regressions.py`、`tools/verify_startup.py` 和 `tools/verify_module_switch.py`。使用新的隔离输出目录，核心/依赖参数沿用下方历史说明。
 
 `MEMORY_FRAMEWORK_MODE=memory_only` 可验收全新仅记忆模式；模式切换脚本自行在完整/仅记忆/完整模式间切换，不需要连接真实群或真实模型。真实质量、稳态性能与其他部署环境尚待验收。
 

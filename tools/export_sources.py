@@ -20,15 +20,15 @@ def record_sources(root=ROOT):
             before_path = legacy + {'module.py': 'main.py', 'UPSTREAM_METADATA.yaml': 'metadata.yaml'}.get(tail, tail)
         elif rel.startswith(prefix + 'pages/learning/'):
             before_path = legacy + 'pages/dashboard/' + rel[len(prefix + 'pages/learning/'):]
-        previous = old.get(rel) if prior.get('release') == '1.1.0' else old.get(before_path)
+        previous = old.get(rel) if 'baseline_release_sha256' in old.get(rel, {}) else old.get(before_path)
         previous = previous or {}
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        baseline = previous.get('baseline_release_sha256') if prior.get('release') == '1.1.0' else previous.get('release_sha256')
+        baseline = previous.get('baseline_release_sha256') if 'baseline_release_sha256' in old.get(rel, {}) else previous.get('release_sha256')
         rows.append({'path': rel, 'baseline_path': previous.get('baseline_path', before_path),
                      'source_sha256': previous.get('source_sha256'), 'baseline_release_sha256': baseline,
                      'release_sha256': digest, 'modified': digest != previous.get('source_sha256'),
                      'changed_from_1_0_1': digest != baseline})
-    manifest = {'release': '1.1.0', 'date': '2026-10-31',
+    manifest = {'release': '1.2.1', 'date': '2026-11-04',
                 'baseline': '1.0.1 maintained source; single Star with internal learning module', 'files': rows}
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', 'utf-8')
     return manifest

@@ -1,0 +1,113 @@
+{
+  "release": "1.1.0",
+  "verified_at": "2026-11-01T00:09:15.397643+08:00",
+  "status": "passed",
+  "tests_passed": 469,
+  "tests": {
+    "test_distribution": 7,
+    "test_unified_modules": 7,
+    "livingmemory": 218,
+    "self_learning": 237
+  },
+  "paid_api_calls": 0,
+  "production_deployed": false,
+  "production_files_verified_unchanged": 9,
+  "runtime_package": {
+    "plugin": "astrbot_plugin_livingmemory",
+    "file": "astrbot_plugin_livingmemory-memoryfw-1.1.0.zip",
+    "sha256": "cf68f65278ecd8661e38e33ecd6fe4382af77e5df431e4d924724b47cc482c45",
+    "bytes": 3975781,
+    "file_count": 491
+  },
+  "source_files_verified": 757,
+  "protected_files_unchanged": 225,
+  "original_schema_groups_unchanged": 39,
+  "resource_observations": {
+    "old_plugin_zip_bytes_sum": 4560775,
+    "new_plugin_zip_bytes": 3975781,
+    "archive_bytes_reduction_percent": 12.826635823955357,
+    "old_runtime_file_count": 755,
+    "new_runtime_file_count": 491,
+    "old_registered_plugins": 2,
+    "new_registered_plugins": 1,
+    "old_registered_handlers": 34,
+    "new_registered_handlers": 33,
+    "baseline_process_rss_mib": [
+      281.81640625,
+      279.90234375
+    ],
+    "unified_process_rss_mib": [
+      280.98828125,
+      278.59765625
+    ],
+    "memory_only_process_rss_mib": 248.3046875,
+    "scope": "Whole-process snapshots, synthetic empty/small databases, auto-learning disabled; not a steady-state benchmark."
+  },
+  "module_switch": [
+    {
+      "phase": 1,
+      "core_started": true,
+      "plugins_ready": true,
+      "external_model_calls": 0,
+      "original_messages": 0,
+      "synthetic_capture_and_recall": true,
+      "replay_blocked": false,
+      "runtime_profile": {
+        "registered_plugins": 1,
+        "registered_handlers": 33,
+        "learning_imported_modules": 166,
+        "pending_async_tasks": 18,
+        "process_rss_bytes": 294637568
+      },
+      "stopped_cleanly": true,
+      "mode": "memory_and_learning",
+      "reenabled_source_reconciled": false
+    },
+    {
+      "phase": 1,
+      "mode": "memory_only",
+      "core_started": true,
+      "single_plugin": true,
+      "learning_not_imported": true,
+      "learning_data_not_created": false,
+      "disabled_source_delivery_pending": true,
+      "external_model_calls": 0,
+      "runtime_profile": {
+        "registered_plugins": 1,
+        "registered_handlers": 33,
+        "learning_imported_modules": 0,
+        "pending_async_tasks": 16,
+        "process_rss_bytes": 260366336
+      },
+      "stopped_cleanly": true,
+      "reenabled_source_reconciled": false
+    },
+    {
+      "phase": 2,
+      "core_started": true,
+      "plugins_ready": true,
+      "external_model_calls": 0,
+      "original_messages": 0,
+      "synthetic_capture_and_recall": false,
+      "replay_blocked": true,
+      "runtime_profile": {
+        "registered_plugins": 1,
+        "registered_handlers": 33,
+        "learning_imported_modules": 166,
+        "pending_async_tasks": 18,
+        "process_rss_bytes": 292130816
+      },
+      "stopped_cleanly": true,
+      "mode": "memory_and_learning",
+      "reenabled_source_reconciled": true
+    }
+  ],
+  "real_astrbot_extractor": true,
+  "limitations": [
+    "No paid-model or real conversation quality evaluation",
+    "No sustained CPU/throughput/load benchmark",
+    "Only the local maintained AstrBot 4.29.1 core and Windows Python 3.12.12 were validated",
+    "Mode changes require plugin reload; database schemas and separate legacy data paths retained"
+  ],
+  "historical_releases_retained": true
+}

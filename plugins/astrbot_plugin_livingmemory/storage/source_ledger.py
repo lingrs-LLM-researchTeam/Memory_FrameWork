@@ -11,7 +11,7 @@ class SourceLedgerMixin:
         """Storage retention keeps the authoritative snapshot revision valid."""
         try:
             async with self.connection.execute(
-                "SELECT * FROM messages WHERE session_id=? ORDER BY timestamp,id LIMIT ?", (session_id, count)
+                "SELECT * FROM messages WHERE session_id=? ORDER BY COALESCE(summary_order_time,timestamp),id LIMIT ?", (session_id, count)
             ) as cursor:
                 rows = await cursor.fetchall()
             for row in rows:
@@ -24,7 +24,7 @@ class SourceLedgerMixin:
             await self.connection.execute("UPDATE source_retention_control SET pruning=1 WHERE id=1")
             cursor = await self.connection.execute(
                 "DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE session_id=?"
-                " ORDER BY timestamp,id LIMIT ?)", (session_id, count),
+                " ORDER BY COALESCE(summary_order_time,timestamp),id LIMIT ?)", (session_id, count),
             )
             await self.connection.execute("UPDATE source_retention_control SET pruning=0 WHERE id=1")
             return max(0, cursor.rowcount)
@@ -204,7 +204,7 @@ class SourceLedgerMixin:
                     return False
                 cursor = await self.connection.execute(
                     "SELECT id,COALESCE(source_uid,'local:'||session_id||':'||id) AS uid "
-                    "FROM messages WHERE session_id=? ORDER BY timestamp,id", (session_id,),
+                    "FROM messages WHERE session_id=? ORDER BY COALESCE(summary_order_time,timestamp),id", (session_id,),
                 )
                 ordered = await cursor.fetchall()
                 positions = [i for i, row in enumerate(ordered) if row["uid"] == source_uid]

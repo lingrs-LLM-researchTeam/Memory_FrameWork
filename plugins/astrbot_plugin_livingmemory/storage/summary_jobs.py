@@ -32,6 +32,9 @@ class SummaryJobsMixin:
 
     async def initialize_summary_jobs(self):
         await self.connection.executescript("""
+            CREATE TABLE IF NOT EXISTS summary_schedule_state(
+                id INTEGER PRIMARY KEY CHECK(id=1), completed_slot INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS reflection_dirty(
                 session_id TEXT PRIMARY KEY,context_json TEXT NOT NULL,
                 generation INTEGER NOT NULL DEFAULT 1,updated_at REAL NOT NULL
@@ -43,6 +46,14 @@ class SummaryJobsMixin:
             );
             CREATE INDEX IF NOT EXISTS idx_summary_jobs_pending ON summary_jobs(status,id);
         """)
+        # Existing messages retain their original order without rewriting any data.
+        message_columns = await (await self.connection.execute("PRAGMA table_info(messages)")).fetchall()
+        if not any(column[1] == "summary_order_time" for column in message_columns):
+            await self.connection.execute("ALTER TABLE messages ADD COLUMN summary_order_time REAL")
+        await self.connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_cursor_order ON messages("
+            "session_id,COALESCE(summary_order_time,timestamp),id)"
+        )
         columns = {r[1] for r in await (await self.connection.execute("PRAGMA table_info(reflection_dirty)")).fetchall()}
         for name, declaration in (("blocked_job_id", "INTEGER"), ("next_attempt_at", "REAL NOT NULL DEFAULT 0")):
             if name not in columns:
@@ -51,6 +62,21 @@ class SummaryJobsMixin:
         # are retried from persisted source IDs, never from an in-memory task.
         await self.connection.execute("UPDATE summary_jobs SET status='pending' WHERE status='running'")
         await self.connection.commit()
+
+    async def completed_summary_slot(self):
+        async with self.connection.execute(
+            "SELECT completed_slot FROM summary_schedule_state WHERE id=1"
+        ) as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def complete_summary_slot(self, cutoff):
+        async with self._write_lock:
+            await self.connection.execute(
+                "INSERT INTO summary_schedule_state VALUES(1,?) ON CONFLICT(id) DO UPDATE "
+                "SET completed_slot=MAX(completed_slot,excluded.completed_slot)", (cutoff,)
+            )
+            await self.connection.commit()
 
     async def record_reflection_input(self, message):
         context = (message.metadata or {}).get("reflection_context")
