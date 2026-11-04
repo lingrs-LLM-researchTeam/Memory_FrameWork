@@ -1,6 +1,6 @@
 {
-  "release": "1.1.0",
-  "date": "2026-10-31",
+  "release": "1.2.1",
+  "date": "2026-11-04",
   "baseline": "1.0.1 maintained source; single Star with internal learning module",
   "files": [
     {
@@ -8,7 +8,7 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/_conf_schema.json",
       "source_sha256": "82ee9404393c3f697d003a59c49b2ad95e0bb1977993b6d71712b351fe652929",
       "baseline_release_sha256": "7a9abebd9aaa5f15e93f4e1a4840e05818b08081c0b684dbd64418afff10a05a",
-      "release_sha256": "c39225c7989d1b91b75cdbcaba26bc8da462f63e45615124cbcf3b12f2528884",
+      "release_sha256": "8988c3c25a9485630f87e68367fb17b9f867b7e99a47eb1e20e14a47823f0596",
       "modified": true,
       "changed_from_1_0_1": true
     },
@@ -53,9 +53,9 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/core/base/config_validator.py",
       "source_sha256": "c15150ae8bbd8474c89f5773521baa3df017e8fa66e0100c7184e0115d1380ee",
       "baseline_release_sha256": "c15150ae8bbd8474c89f5773521baa3df017e8fa66e0100c7184e0115d1380ee",
-      "release_sha256": "c15150ae8bbd8474c89f5773521baa3df017e8fa66e0100c7184e0115d1380ee",
-      "modified": false,
-      "changed_from_1_0_1": false
+      "release_sha256": "d98da79983fd071537bec2b6ab9ca07fdd84495bd33d67f4ed3d8a13b0393c67",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/core/base/constants.py",
@@ -134,9 +134,9 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/core/event_handler_modules/memory_reflection.py",
       "source_sha256": "6d70c8feed0f703b9c724821ad4bd4ad0ff34c291cb7fb64afd0e03751cc4c28",
       "baseline_release_sha256": "6d70c8feed0f703b9c724821ad4bd4ad0ff34c291cb7fb64afd0e03751cc4c28",
-      "release_sha256": "6d70c8feed0f703b9c724821ad4bd4ad0ff34c291cb7fb64afd0e03751cc4c28",
-      "modified": false,
-      "changed_from_1_0_1": false
+      "release_sha256": "b803a6e73a7c9dfb1c1a2ff9d05e87fa681dd645018dced9e55de20c96bbfa90",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/core/event_handler_modules/message_utils.py",
@@ -935,18 +935,27 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/core/summary_recovery.py",
       "source_sha256": "ac45a5b3c92a43094dbb07cd39e5e5c03e45bcb1213fae9be7cc238682fe7025",
       "baseline_release_sha256": "ac45a5b3c92a43094dbb07cd39e5e5c03e45bcb1213fae9be7cc238682fe7025",
-      "release_sha256": "ac45a5b3c92a43094dbb07cd39e5e5c03e45bcb1213fae9be7cc238682fe7025",
-      "modified": false,
-      "changed_from_1_0_1": false
+      "release_sha256": "555d47c09b49b42c8343d9e23c348d37f29f3208d9c0bb91c046a8c147daaf8c",
+      "modified": true,
+      "changed_from_1_0_1": true
+    },
+    {
+      "path": "plugins/astrbot_plugin_livingmemory/core/summary_schedule.py",
+      "baseline_path": "plugins/astrbot_plugin_livingmemory/core/summary_schedule.py",
+      "source_sha256": null,
+      "baseline_release_sha256": null,
+      "release_sha256": "91a911a1d4e002d3e7dfd685524455a995f4457cb4ba5236703ad521ad5afb12",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/core/summary_window.py",
       "baseline_path": "plugins/astrbot_plugin_livingmemory/core/summary_window.py",
       "source_sha256": "1b278ab363c40fa928e32c1af1d9bb5120c60e9fafa7fb6d5a06351e48fd598d",
       "baseline_release_sha256": "1b278ab363c40fa928e32c1af1d9bb5120c60e9fafa7fb6d5a06351e48fd598d",
-      "release_sha256": "1b278ab363c40fa928e32c1af1d9bb5120c60e9fafa7fb6d5a06351e48fd598d",
-      "modified": false,
-      "changed_from_1_0_1": false
+      "release_sha256": "576bbf5c95f700d9821bcb21fe6aedfd01be6d559da896904341186b57c47b62",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/core/tools/__init__.py",
@@ -5345,7 +5354,7 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/main.py",
       "source_sha256": "8b9084b6ef4892c31d8951f552353e89eb12f18d719bb48fa21e1dd9b18c1a50",
       "baseline_release_sha256": "0e2a9eabc4d7fae235a62e3aad2c93fcd17c23bb13ac3cea2d0bcbe96708f69f",
-      "release_sha256": "d24fc64fa235762bf6d8989a28cba86dbace83d3e11bb003a598dd6dae315db4",
+      "release_sha256": "84dc5f2ff3215e0eae57427b915c0c6829646be3a4c40d12141e7365fc89ddab",
       "modified": true,
       "changed_from_1_0_1": true
     },
@@ -5354,7 +5363,7 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/metadata.yaml",
       "source_sha256": "d4a62c0fa66362b0a8b1173756879f6f106f88b20ed4f70fbf6370162e9eda23",
       "baseline_release_sha256": "1ca994d1f5a588112bd14102e01b459fd8eae48148feb6490c8654a9093ab151",
-      "release_sha256": "ff9086b2fca50eac0ef93ce706ba6134c8d899675839b19459b6fac1337ebf38",
+      "release_sha256": "c3182599ea685864c681cf9d1dae8636ac5709073f39c7656ab151c4992f359c",
       "modified": true,
       "changed_from_1_0_1": true
     },
@@ -5642,7 +5651,7 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/README.md",
       "source_sha256": "f9e2100e8237bc8cf419f8a841b044d1b6288aa979c79cd2917ab99b4a016187",
       "baseline_release_sha256": "0fa16b01a9529131a11dc3988647aad82445fed17f8ff46cdfee05f52b62cbc9",
-      "release_sha256": "77a064c3c11a32e004b524a1fe6a5577b9e0b1d58f0332dd6055ef6be5c10331",
+      "release_sha256": "bee7da433facec540042ca98709761b56a8cbfd4e2b1140cb65fe19e4adb1624",
       "modified": true,
       "changed_from_1_0_1": true
     },
@@ -5732,9 +5741,9 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/storage/conversation_store_messages.py",
       "source_sha256": "44c515c604306c826d046ef3516bd466d4ceeaff90c7bb924da414013ad7abfa",
       "baseline_release_sha256": "44c515c604306c826d046ef3516bd466d4ceeaff90c7bb924da414013ad7abfa",
-      "release_sha256": "44c515c604306c826d046ef3516bd466d4ceeaff90c7bb924da414013ad7abfa",
-      "modified": false,
-      "changed_from_1_0_1": false
+      "release_sha256": "013e1c9206aa5da33cb15b05dd36176875f37e39b3d7af4a25381b42b8c114af",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/storage/db_migration.py",
@@ -5795,18 +5804,18 @@
       "baseline_path": "plugins/astrbot_plugin_livingmemory/storage/source_ledger.py",
       "source_sha256": "3a30fa5c69096695a8a2502d7cd1f6db73b5519bf9d1a56f212b14d640d35662",
       "baseline_release_sha256": "3a30fa5c69096695a8a2502d7cd1f6db73b5519bf9d1a56f212b14d640d35662",
-      "release_sha256": "3a30fa5c69096695a8a2502d7cd1f6db73b5519bf9d1a56f212b14d640d35662",
-      "modified": false,
-      "changed_from_1_0_1": false
+      "release_sha256": "dc96183c4548c65215b995e550890b598bd83c33a7e289c3b754c3e3a8faa319",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/storage/summary_jobs.py",
       "baseline_path": "plugins/astrbot_plugin_livingmemory/storage/summary_jobs.py",
       "source_sha256": "2668b20e3e560b6c4fd281b74541fe02b93fe6b31d5befe785133e659f2326ce",
       "baseline_release_sha256": "2668b20e3e560b6c4fd281b74541fe02b93fe6b31d5befe785133e659f2326ce",
-      "release_sha256": "2668b20e3e560b6c4fd281b74541fe02b93fe6b31d5befe785133e659f2326ce",
-      "modified": false,
-      "changed_from_1_0_1": false
+      "release_sha256": "3430a64c0d7d9ceda5f68c5b591b05e75134b8658719b1795b87c96b2b8bcc06",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/tests/__init__.py",
@@ -6149,6 +6158,15 @@
       "release_sha256": "cc5d0f89634467f9d9991020b8ec0d61a81ee5ed3b7d9aa80bbacb11d44dd3c7",
       "modified": false,
       "changed_from_1_0_1": false
+    },
+    {
+      "path": "plugins/astrbot_plugin_livingmemory/tests/test_daily_summary_slots.py",
+      "baseline_path": "plugins/astrbot_plugin_livingmemory/tests/test_daily_summary_slots.py",
+      "source_sha256": null,
+      "baseline_release_sha256": null,
+      "release_sha256": "d7968afb30dacb35d4a89a313cfcaa4c94c73a76c08642b1e65584c33b11db1e",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/tests/test_dashboard_assets.py",
@@ -6590,6 +6608,15 @@
       "release_sha256": "71b1460a7a099ba904e20b30dc6e077180d7f47ad21628096d8ba4373c173e93",
       "modified": false,
       "changed_from_1_0_1": false
+    },
+    {
+      "path": "plugins/astrbot_plugin_livingmemory/tests/test_summary_mode_comparison.py",
+      "baseline_path": "plugins/astrbot_plugin_livingmemory/tests/test_summary_mode_comparison.py",
+      "source_sha256": null,
+      "baseline_release_sha256": null,
+      "release_sha256": "b9e2950ecfcff2d43d1470c55540eeed8eff720055b4bc08d0d73eded3dfd16e",
+      "modified": true,
+      "changed_from_1_0_1": true
     },
     {
       "path": "plugins/astrbot_plugin_livingmemory/tests/test_text_processor.py",

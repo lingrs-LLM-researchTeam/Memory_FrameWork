@@ -18,6 +18,8 @@ def main():
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--test-deps", type=Path, help="optional directory containing pytest and pytest-asyncio")
     parser.add_argument("--child", choices=["livingmemory", "self_learning"])
+    parser.add_argument("--comparison-vocab", type=Path, help="local Qwen .tiktoken vocabulary for offline A/B replay")
+    parser.add_argument("--comparison-timeline", type=Path, help="optional read-only conversations.db timing sample")
     args = parser.parse_args()
     output = args.output.resolve()
     core = args.core.resolve()
@@ -34,6 +36,10 @@ def main():
                            "--output", str(output), "--child", name]
                 if args.test_deps:
                     command += ["--test-deps", str(args.test_deps.resolve())]
+                for flag, path in (("--comparison-vocab", args.comparison_vocab),
+                                   ("--comparison-timeline", args.comparison_timeline)):
+                    if path:
+                        command += [flag, str(path.resolve())]
                 run = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT,
                     env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=300)
             result.append({"component": name, "exit_code": run.returncode})
@@ -85,7 +91,14 @@ def main():
             "test_memory_v02_invariants", "test_memory_v03_audit", "test_memory_v03_completion",
             "test_memory_v04_review", "test_memory_v05_review", "test_memory_scope", "test_injection_adapter",
             "test_llm_usage", "test_llm_streaming", "test_memory_processor", "test_memory_processor_regressions",
-            "test_consolidation_manager", "test_features_77_76_74_59", "test_unified_dispatch")]
+            "test_consolidation_manager", "test_features_77_76_74_59", "test_unified_dispatch",
+            "test_daily_summary_slots")]
+        if args.comparison_vocab:
+            os.environ["SUMMARY_COMPARISON_VOCAB"] = str(args.comparison_vocab.resolve())
+            os.environ["SUMMARY_COMPARISON_OUTPUT"] = str(output)
+            if args.comparison_timeline:
+                os.environ["SUMMARY_COMPARISON_TIMELINE"] = str(args.comparison_timeline.resolve())
+            cases.append("tests/test_summary_mode_comparison.py")
     cases = [str(source / case) for case in cases]
     import pytest
     return pytest.main(["-p", "pytest_asyncio.plugin", "-o", "addopts=", *cases, "-q", "--disable-warnings", "--tb=short",

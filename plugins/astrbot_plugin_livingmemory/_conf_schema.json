@@ -449,6 +449,20 @@
     "hint": "控制何时触发对话总结并生成记忆",
     "type": "object",
     "items": {
+      "summary_trigger_mode": {
+        "description": "自动整理触发方式",
+        "hint": "rounds 按未整理轮数触发。daily_slots 按北京时间 08:00、13:00、18:30、次日 00:00 增量整理，设置后重载插件。",
+        "type": "string",
+        "options": ["rounds", "daily_slots"],
+        "default": "rounds"
+      },
+      "slot_min_messages": {
+        "description": "四时点日间合批门槛（条）",
+        "hint": "仅用于 daily_slots。白天待整理消息不足门槛时留到下个时点，次日 00:00 处理当天余量。设为 1 恢复每个非空窗口独立整理。人格、作用域与空闲切分仍可产生小批。",
+        "type": "int",
+        "default": 20,
+        "slider": {"min": 1, "max": 200, "step": 1}
+      },
       "summary_trigger_rounds": {
         "description": "总结触发轮次",
         "hint": "累计对话达到该轮次（一问一答为一轮）后触发总结并写入记忆。（允许范围：1–100）",

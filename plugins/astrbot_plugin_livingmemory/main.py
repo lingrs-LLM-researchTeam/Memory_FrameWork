@@ -98,7 +98,7 @@ elif _version_lt(_CURRENT_ASTRBOT_VERSION, _MIN_ASTRBOT_VERSION):
     "LivingMemory",
     "lxfight",
     "An intelligent long-term memory plugin with a dynamic lifecycle for AstrBot.",
-    "2.7.0-beta.3+memoryfw.3",
+    "2.7.0-beta.3+memoryfw.5",
     "https://github.com/lxfight-s-Astrbot-Plugins/astrbot_plugin_livingmemory",
 )
 class LivingMemoryPlugin(Star):

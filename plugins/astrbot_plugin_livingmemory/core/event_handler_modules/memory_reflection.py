@@ -18,6 +18,7 @@ from ..memory_scope import (
     is_suspicious_session_id,
     resolve_memory_scope,
 )
+from ..summary_schedule import uses_fixed_slots
 from ..memory_source import serialize_source_messages
 from ..utils import get_persona_id
 
@@ -289,6 +290,9 @@ class MemoryReflection:
             is_group = event.get_message_type() == MessageType.GROUP_MESSAGE
             if not is_group:
                 await self.message_utils.enforce_message_limit(session_id)
+
+            if uses_fixed_slots(self.config_manager):
+                return  # Raw capture is durable; the clock owns automatic summaries.
 
             # 获取会话信息
             session_info = await self.conversation_manager.get_session_info(session_id)
@@ -672,6 +676,8 @@ class MemoryReflection:
                 )
 
                 # 使用 MemoryProcessor 处理对话历史
+                if self.memory_engine is None and uses_fixed_slots(self.config_manager):
+                    raise RuntimeError("记忆存储未就绪，保留时点任务")
                 if not self.memory_processor:
                     logger.error(f"[{session_id}] MemoryProcessor 未初始化，记录待重试")
                     await self._record_pending_summary(

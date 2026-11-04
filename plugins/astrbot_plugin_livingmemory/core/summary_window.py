@@ -16,7 +16,7 @@ class SummaryWindow:
         if self.start < 0 or self.end <= self.start or self.end - self.start != len(self.sources):
             return False
         cursor = await store.connection.execute(
-            "SELECT * FROM messages WHERE session_id=? ORDER BY timestamp,id LIMIT ? OFFSET ?",
+            "SELECT * FROM messages WHERE session_id=? ORDER BY COALESCE(summary_order_time,timestamp),id LIMIT ? OFFSET ?",
             (self.session_id, self.end - self.start, self.start))
         actual = tuple(source_reference(dict(row)) for row in await cursor.fetchall())
         return actual == self.sources and await store.sources_current(self.sources)

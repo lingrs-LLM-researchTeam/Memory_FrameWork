@@ -83,13 +83,23 @@ class ConversationStoreMessagesMixin:
                     (message.session_id, platform, now, message.timestamp),
                 )
 
+                order_override = None
+                if getattr(self, "fixed_slot_capture", False):
+                    # Delayed platform events must land after any committed cursor.
+                    # Keep timestamp itself intact for prompts and source attribution.
+                    latest = await (await self.connection.execute(
+                        "SELECT MAX(COALESCE(summary_order_time,timestamp)) FROM messages WHERE session_id=?",
+                        (message.session_id,),
+                    )).fetchone()
+                    if latest[0] is not None and message.timestamp < latest[0]:
+                        order_override = latest[0]
                 cursor = await self.connection.execute(
                     """
                     INSERT INTO messages (
                         session_id, role, content, sender_id, sender_name,
-                        group_id, platform, timestamp, metadata, source_uid
+                        group_id, platform, timestamp, metadata, source_uid, summary_order_time
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                     (
                         message.session_id,
@@ -102,6 +112,7 @@ class ConversationStoreMessagesMixin:
                         message.timestamp,
                         serialize_to_json(message.metadata),
                         source_uid,
+                        order_override,
                     ),
                 )
 
@@ -158,7 +169,7 @@ class ConversationStoreMessagesMixin:
             sender_id: 可选,按发送者ID过滤
 
         Returns:
-            List[Message]: 消息列表 (按时间升序)
+            List[Message]: 消息列表 (按会话游标顺序)
         """
         if sender_id:
             # 按发送者过滤
@@ -167,7 +178,7 @@ class ConversationStoreMessagesMixin:
                        group_id, platform, timestamp, metadata
                 FROM messages
                 WHERE session_id = ? AND sender_id = ?
-                ORDER BY timestamp DESC, id DESC
+                ORDER BY COALESCE(summary_order_time,timestamp) DESC, id DESC
                 LIMIT ?
             """
             params = (session_id, sender_id, limit)
@@ -178,7 +189,7 @@ class ConversationStoreMessagesMixin:
                        group_id, platform, timestamp, metadata
                 FROM messages
                 WHERE session_id = ?
-                ORDER BY timestamp DESC, id DESC
+                ORDER BY COALESCE(summary_order_time,timestamp) DESC, id DESC
                 LIMIT ?
             """
             params = (session_id, limit)
@@ -391,9 +402,8 @@ class ConversationStoreMessagesMixin:
     ) -> list[Message]:
         """按会话顺序返回消息，含完整 metadata。
 
-        排序键为 ``timestamp ASC, id ASC``，与滑动窗口/游标语义
-        （get_messages_range 的 timestamp 序，trim 的 timestamp,id 序）保持一致；
-        常规情况下与插入顺序（id 升序）等价，时钟跳变时以时间序为准。
+        排序键为有效顺序时间、id，与窗口、保留清理及来源撤销使用同一顺序。
+        时点模式下迟到事件排在采集尾部，返回的 timestamp 仍是原始发送时间。
 
         Args:
             session_id: 会话ID
@@ -410,7 +420,7 @@ class ConversationStoreMessagesMixin:
                    group_id, platform, timestamp, metadata
             FROM messages
             WHERE session_id = ?
-            ORDER BY timestamp ASC, id ASC
+            ORDER BY COALESCE(summary_order_time,timestamp) ASC, id ASC
         """
         params: tuple = (session_id,)
         if limit is not None:
@@ -446,7 +456,7 @@ class ConversationStoreMessagesMixin:
         """按会话顺序返回对账所需的最小字段（id/role/metadata）。
 
         供对话历史对账使用，避免构造完整 Message 对象（跳过 content 等大字段）。
-        排序键与 get_session_messages_asc 一致（``timestamp ASC, id ASC``）。
+        排序键与 get_session_messages_asc 一致（有效顺序时间、id）。
 
         Args:
             session_id: 会话ID
@@ -461,7 +471,7 @@ class ConversationStoreMessagesMixin:
             SELECT id, role, metadata
             FROM messages
             WHERE session_id = ?
-            ORDER BY timestamp ASC, id ASC
+            ORDER BY COALESCE(summary_order_time,timestamp) ASC, id ASC
         """
         refs: list[dict[str, Any]] = []
         async with self.connection.execute(query, (session_id,)) as cursor:
@@ -499,7 +509,7 @@ class ConversationStoreMessagesMixin:
                    group_id, platform, timestamp, metadata
             FROM messages
             WHERE session_id = ?
-            ORDER BY timestamp DESC, id DESC
+            ORDER BY COALESCE(summary_order_time,timestamp) DESC, id DESC
             LIMIT 1
         """,
             (session_id,),
@@ -624,8 +634,7 @@ class ConversationStoreMessagesMixin:
         插件会话库中对应的被撤销消息，同时修正 message_count、
         last_summarized_index 与 pending_summary，避免游标漂移。
 
-        位置排序键为 ``timestamp ASC, id ASC``，与滑动窗口/游标语义保持一致
-        （常规下等价于插入顺序；时钟跳变时以时间序为准）。
+        位置排序键与滑动窗口、来源账本一致（有效顺序时间、id）。
 
         Args:
             session_id: 会话ID
@@ -663,9 +672,9 @@ class ConversationStoreMessagesMixin:
                 # 定位起始消息（按会话顺序），position == 0 表示从第一条删除
                 async with self.connection.execute(
                     """
-                    SELECT id, timestamp FROM messages
+                    SELECT id, COALESCE(summary_order_time,timestamp) AS cursor_time FROM messages
                     WHERE session_id = ?
-                    ORDER BY timestamp ASC, id ASC
+                    ORDER BY COALESCE(summary_order_time,timestamp) ASC, id ASC
                     LIMIT 1 OFFSET ?
                     """,
                     (session_id, position),
@@ -675,15 +684,15 @@ class ConversationStoreMessagesMixin:
                 if not row:
                     return 0
                 start_id = row["id"]
-                start_timestamp = row["timestamp"]
+                start_timestamp = row["cursor_time"]
 
                 cursor = await self.connection.execute(
                     """
                     DELETE FROM messages
                     WHERE session_id = ?
-                      AND (timestamp > ? OR (timestamp = ? AND id >= ?))
+                      AND (COALESCE(summary_order_time,timestamp),id) >= (?,?)
                     """,
-                    (session_id, start_timestamp, start_timestamp, start_id),
+                    (session_id, start_timestamp, start_id),
                 )
                 deleted_count = max(0, cursor.rowcount)
                 if deleted_count <= 0:
@@ -821,7 +830,7 @@ class ConversationStoreMessagesMixin:
                    group_id, platform, timestamp, metadata
             FROM messages
             WHERE session_id = ? AND content LIKE ?
-            ORDER BY timestamp DESC, id DESC
+            ORDER BY COALESCE(summary_order_time,timestamp) DESC, id DESC
             LIMIT ?
         """,
             (session_id, f"%{keyword}%", limit),
@@ -861,18 +870,18 @@ class ConversationStoreMessagesMixin:
             limit: 获取的消息数量
 
         Returns:
-            List[Message]: 消息列表（按时间升序）
+            List[Message]: 消息列表（按会话游标顺序）
         """
         if self.connection is None:
             return []
 
-        # 使用子查询确保按时间升序后再应用 OFFSET/LIMIT
+        # 按会话游标顺序截取连续窗口
         query = """
             SELECT id, session_id, role, content, sender_id, sender_name,
                    group_id, platform, timestamp, metadata
             FROM messages
             WHERE session_id = ?
-            ORDER BY timestamp ASC, id ASC
+            ORDER BY COALESCE(summary_order_time,timestamp) ASC, id ASC
             LIMIT ? OFFSET ?
         """
 

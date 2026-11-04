@@ -4,7 +4,7 @@ config_validator.py - 配置验证模块
 """
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -144,6 +144,8 @@ class FusionStrategyConfig(BaseModel):
 class ReflectionEngineConfig(BaseModel):
     """反思引擎配置"""
 
+    summary_trigger_mode: Literal["rounds", "daily_slots"] = "rounds"
+    slot_min_messages: int = Field(default=20, ge=1, le=200, description="四时点日间合批所需的新增消息数")
     summary_trigger_rounds: int = Field(
         default=10, ge=1, le=100, description="触发反思的对话轮次"
     )
